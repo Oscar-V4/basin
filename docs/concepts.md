@@ -2,6 +2,8 @@
 
 Basin models the *context state* of an AI collaboration — not the chat log, but the distilled, governed answer to: **what should the assistant believe, avoid, and use as a basis for the next action?**
 
+It is host-agnostic at the storage layer. Claude Code and Codex feed Basin different transcript and hook shapes, but both end up as the same `.basin/` files: raw events, atom revisions, checkpoints, branches, and packs.
+
 ## Context atom
 
 The unit of context. Every atom has a type:
@@ -31,6 +33,10 @@ Fork detection (opt-in) finds the parent by the **longest common prefix** of the
 ## Checkpoint
 
 A commit — a captured context transition, not the raw transcript itself. Kinds: `manual`, `pre_compact`, `turn_end`, `session_end`, `semantic_commit`, `merge`, `release_build`, `fork_point`. The `pre_compact` checkpoint is special: it fires the instant before a context window compresses, which is exactly when context is usually lost. `turn_end` is the Codex-friendly capture point for hosts that fire after each turn; repeated hooks with no new transcript events do not create checkpoints.
+
+## Host integrations
+
+Claude Code uses `SessionStart`, `PreCompact`, and `SessionEnd` hooks, plus slash commands for common Basin actions. Codex uses the same engine through `basin codex-hook`, mapping Codex rollout transcripts into the same raw-event format; `Stop` is treated as a `turn_end` capture rather than a final session close. A project can use either host, or both, without changing the `.basin/` data model.
 
 ## Context Pack
 

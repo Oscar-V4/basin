@@ -1,13 +1,13 @@
 {
   "name": "basin",
   "owner": "basin",
-  "metadata": { "description": "Context configuration management for AI collaboration." },
+  "metadata": { "description": "Context configuration management for Claude Code and Codex collaboration." },
   "plugins": [
     {
       "name": "basin",
       "source": "./",
       "version": "0.1.0",
-      "description": "Capture forked threads, settle agreed context into a versioned Canon, compile Context Packs for new threads. NOTE: the plugin loader surfaces slash commands only — for hooks/agents (the always-on engine) run `npx basin install`."
+      "description": "Capture sessions, settle agreed context into a versioned Canon, and compile Context Packs for new threads. NOTE: the Claude Code plugin loader surfaces slash commands only — for Claude hooks run `./plugin/install.sh`; for Codex hooks run `./plugin/install-codex.sh` from the repo."
     }
   ]
 }

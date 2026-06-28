@@ -6,6 +6,12 @@ data formats may still change.
 
 ## [Unreleased]
 
+### Changed
+- Refreshed the README, concepts guide, Git comparison, and plugin metadata so the
+  product description matches the current Claude Code + Codex capture model.
+
+## [0.1.1-alpha] — 2026-06-29
+
 ### Added — Codex transcript capture adapter
 - Basin now ingests Codex rollout JSONL transcripts as conversational raw events while
   preserving the existing Claude Code parser behavior. Codex `response_item` messages map
