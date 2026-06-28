@@ -46,6 +46,7 @@ class Model:
         self.cfg = self.store.config()
         self.canon_branch = self.cfg.get("canon_branch", "main")
         self.current_branch = self.canon_branch
+        self.flash = None            # transient one-shot message shown in the status line
         self.reload()
 
     def reload(self):
@@ -70,12 +71,38 @@ class Model:
         return ops.current_atoms(self.store, branch_id, lifecycles=lifecycles)
 
     def status_line(self):
+        if self.flash:
+            text, style = self.flash
+            return [(style and "⚠ " or "", style or "muted"), (text, style or "muted")]
         n_atoms = len(self._atoms(self.current_branch))
         on = self.cfg.get("enabled", True)
         dot = ("●", "green") if on else ("○", "muted")
         return [dot, (f" Basin · {self.cfg.get('project_name','project')} · "
                       f"{self.branch_name.get(self.current_branch, self.current_branch)} · "
                       f"{n_atoms} atoms · {len(self.branches)} branches · {len(self.checkpoints)} checkpoints", "muted")]
+
+    def merge_row(self, idx, force=False):
+        """Merge/force-merge the atom at proposal row `idx`. Sets a flash message; returns it."""
+        atoms = getattr(self, "_proposal_row_atoms", [])
+        kinds = getattr(self, "_proposal_row_kind", [])
+        if not (0 <= idx < len(atoms)) or not atoms[idx]:
+            self.flash = ("Select a proposal row to merge.", "muted")
+            return self.flash
+        kind = kinds[idx] if idx < len(kinds) else None
+        if kind == "conflict" and not force:
+            self.flash = ("Conflict — press F to force-merge (overrides divergence/rejection).", "yellow")
+            return self.flash
+        res = ops.merge_atom(self.store, self.current_branch, self._canon_id(), atoms[idx],
+                             project_id=self.cfg.get("project_id"), force=force)
+        st = res.get("status")
+        self.reload()                # refresh data first; reload() leaves flash untouched
+        if st == "conflict":
+            self.flash = (f"Conflict ({res.get('reason','')}) — not merged. Press F to force.", "red")
+        elif st in ("merged", "noop"):
+            self.flash = (f"Merged into Canon ({st}).", "green")
+        else:
+            self.flash = (f"Merge {st}.", "muted")
+        return self.flash
 
     # ---- THREADS (lane graph) ----
     def threads_rows(self):
@@ -168,12 +195,13 @@ class Model:
 
     # ---- PROPOSALS (branch -> canon diff) ----
     def proposals_rows(self):
-        # row-aligned merge targets (reset first so a canon-branch view can't reuse stale ones)
-        rows, self._proposal_row_atoms = [], []
+        # row-aligned merge targets + row kind (reset first so a canon view can't reuse stale ones)
+        rows, self._proposal_row_atoms, self._proposal_row_kind = [], [], []
 
-        def add(segs, atom_id=None):
+        def add(segs, atom_id=None, kind=None):
             rows.append(segs)
             self._proposal_row_atoms.append(atom_id)
+            self._proposal_row_kind.append(kind)
 
         if self.current_branch == self._canon_id():
             add([("Switch to a branch (Branches tab, enter) to see merge proposals.", "muted")])
@@ -182,16 +210,22 @@ class Model:
         if d["new"]:
             add([("+ New — will be added to Canon", "header")])
             for a in d["new"]:
-                add([("  + ", "green"), (a.get("statement", "")[:200], "normal")], a["atom_id"])
+                add([("  + ", "green"), (a.get("statement", "")[:200], "normal")], a["atom_id"], "new")
         if d["changed"]:
             add([("~ Changed — will supersede Canon", "header")])
             for c in d["changed"]:
-                add([("  ~ ", "yellow"), (c["branch"].get("statement", "")[:200], "normal")], c["branch"]["atom_id"])
+                add([("  ~ ", "yellow"), (c["branch"].get("statement", "")[:200], "normal")], c["branch"]["atom_id"], "changed")
+        if d.get("conflicts"):
+            add([("⚠ Conflicts — settle will NOT auto-merge (F to force)", "header")])
+            for c in d["conflicts"]:
+                reason = c.get("reason", "conflict")
+                add([("  ⚠ ", "red"), (f"[{reason}] ", "yellow"),
+                     (c["branch"].get("statement", "")[:180], "normal")], c["branch"]["atom_id"], "conflict")
         if d["removed"]:
             add([("− Only in Canon (unchanged here)", "header")])
             for a in d["removed"]:
                 add([("  · ", "muted"), (a.get("statement", "")[:200], "dim")])
-        if not (d["new"] or d["changed"] or d["removed"]):
+        if not (d["new"] or d["changed"] or d.get("conflicts") or d["removed"]):
             add([("No differences from Canon.", "muted")])
         return rows
 

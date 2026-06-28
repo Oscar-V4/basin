@@ -24,7 +24,7 @@ _HINTS = {
     "Branches": "tab: switch · ↑↓: move · enter: focus branch · r: refresh · q: quit",
     "Changes": "tab: switch · ↑↓: move · a: adopt · d: discard · r: refresh · q: quit",
     "Canon": "tab: switch · r: refresh · q: quit",
-    "Proposals": "tab: switch · ↑↓: move · m: merge into canon · r: refresh · q: quit",
+    "Proposals": "tab: switch · ↑↓: move · m: merge · F: force-merge conflict · r: refresh · q: quit",
     "Map": "tab: switch · r: refresh · q: quit",
 }
 
@@ -165,6 +165,7 @@ def run(stdscr, root: str):
             else:
                 scroll[tab] = max(0, scroll[tab] - 1)
         elif ch == ord("r"):
+            model.flash = None
             model.reload()
         elif ch in (curses.KEY_ENTER, 10, 13) and tab == "Branches":
             model.set_branch_by_row(sel[tab])
@@ -173,11 +174,9 @@ def run(stdscr, root: str):
         elif ch == ord("d") and tab == "Changes":
             model.discard(sel[tab])
         elif ch == ord("m") and tab == "Proposals":
-            atoms = getattr(model, "_proposal_row_atoms", [])
-            if 0 <= sel[tab] < len(atoms) and atoms[sel[tab]]:
-                from . import ops
-                ops.merge_atom(model.store, model.current_branch, model._canon_id(), atoms[sel[tab]])
-                model.reload()
+            model.merge_row(sel[tab])
+        elif ch == ord("F") and tab == "Proposals":
+            model.merge_row(sel[tab], force=True)
 
 
 def main(root: str = ".", argv=None) -> int:

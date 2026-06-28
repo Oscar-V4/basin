@@ -18,6 +18,7 @@ ENGINE = os.path.dirname(HERE)
 sys.path.insert(0, ENGINE)
 
 from basin import core, ops, fork  # noqa: E402
+from basin.tui_model import Model  # noqa: E402
 
 _fails = []
 
@@ -189,6 +190,28 @@ def main():
     ops.promote_branch(store, b)
     res = ops.settle_branch(store, b, "main", project_id=pid)
     check("r4-4: same-fork real contradiction (do X + X-rejected) is flagged", len(res["contradictions"]) >= 1, str(res))
+
+    # ---- TUI: a divergent proposal shows as a Conflict row; m warns, F force-merges ----
+    store, pid = fresh()
+    ops.stage_atom(store, pid, "main", None, "decision", "DB is Postgres.", "db", "user_explicit")
+    ops.promote_branch(store, "main")
+    exp = fork.create_branch(store, pid, "exp", base_checkpoint_id=store.get_branch_head("main"), from_branch="main")
+    ops.stage_atom(store, pid, exp, None, "decision", "DB is SQLite.", "db", "user_explicit")
+    ops.promote_branch(store, exp)
+    ops.stage_atom(store, pid, "main", None, "decision", "DB is MySQL after review.", "db", "user_explicit")
+    ops.promote_branch(store, "main")          # canon diverged
+    m = Model(str(store.root))
+    m.current_branch = exp
+    m.proposals_rows()
+    kinds = m._proposal_row_kind
+    check("tui: divergent proposal renders a conflict row", "conflict" in kinds, str(kinds))
+    ci = kinds.index("conflict")
+    f1 = m.merge_row(ci)                        # plain merge on a conflict -> warn, do not merge
+    check("tui: m on a conflict warns to use F", "force" in f1[0].lower(),
+          str(f1) + " canon=" + str(stmts_on(store, "main")))
+    check("tui: m did not overwrite canon", "DB is MySQL after review." in stmts_on(store, "main"))
+    f2 = m.merge_row(ci, force=True)            # F force-merges
+    check("tui: F force-merges the conflict", "DB is SQLite." in stmts_on(store, "main"), str(f2))
 
     print("\n" + ("ALL PASS" if not _fails else f"FAILED: {_fails}"))
     return 1 if _fails else 0

@@ -70,12 +70,16 @@ data formats may still change.
 - `basin reconcile` / `basin settle` now report conflicts and contradictions.
 
 ### Added
+- **TUI surfaces merge conflicts.** The Proposals tab now shows a **⚠ Conflicts** section
+  (divergence / would-resurrect-rejected), `m` warns instead of silently no-merging a conflict,
+  and `F` force-merges. The merge-preview (`diff_branch_vs_canon`) now distinguishes a clean
+  fast-forward from a divergence, so the preview matches what `settle` will do.
 - `basin doctor` — integrity check (orphan refs, headless branches, corrupt JSONL,
   index staleness, dangling do-not-load).
 - `basin settle --branch X` — reconcile a branch and settle it into canon from the CLI.
 - `basin ignore --atom A` — attention-budget control (`exclude` / `retrieve_only` / `allow`).
 - TUI **Map** tab (context clusters).
-- Test suites grew to **150 checks** (`engine/tests/`), including `test_dogfood.py` and
+- Test suites grew to **154 checks** (`engine/tests/`), including `test_dogfood.py` and
   `test_merge.py` (fork/settle conflict semantics).
 
 ## [0.1.0] — initial alpha

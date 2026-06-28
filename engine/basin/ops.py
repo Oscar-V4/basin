@@ -327,8 +327,10 @@ def current_branch_for_session(store: Store, external_session_id: str, default: 
 def diff_branch_vs_canon(store: Store, branch_id: str, canon_branch: str) -> dict:
     """Pure analysis (lix merge-preview spirit): what would settling this branch change?
 
-    `conflicts` surfaces atoms the canon owner explicitly retired (terminal lifecycle) that the
-    branch would resurrect — so settle can refuse them instead of silently reversing a rejection.
+    `conflicts` surfaces atoms that settle would NOT silently win: a branch that would resurrect a
+    canon atom the owner retired (terminal lifecycle), and a "changed" atom whose canon side
+    advanced independently since the fork (divergence). `changed` is reserved for clean
+    fast-forwards, so the preview matches what `settle` will actually do.
     """
     if branch_id == canon_branch:
         return {"new": [], "changed": [], "removed": [], "conflicts": []}
@@ -345,7 +347,10 @@ def diff_branch_vs_canon(store: Store, branch_id: str, canon_branch: str) -> dic
             else:
                 new.append(a)
         elif a.get("semantic_fp") != canon[aid].get("semantic_fp"):
-            changed.append({"branch": a, "canon": canon[aid]})
+            if _is_ancestor_rev(store, aid, canon[aid].get("id"), a.get("id")):
+                changed.append({"branch": a, "canon": canon[aid]})          # clean fast-forward
+            else:
+                conflicts.append({"branch": a, "canon": canon[aid], "reason": "diverged"})
     for aid, a in canon.items():
         if aid not in branch:
             removed.append(a)
