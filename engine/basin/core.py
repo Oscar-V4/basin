@@ -20,7 +20,7 @@ try:
 except ImportError:  # non-posix
     _HAVE_FCNTL = False
 
-VERSION = "0.1.0"
+VERSION = "0.1.3-alpha"
 
 # ---- enums / vocab (mirrors BLUEPRINT 4.1) -------------------------------
 ATOM_TYPES = (
@@ -55,6 +55,13 @@ def sha256_hex(s: str) -> str:
 
 def norm_ws(s: str | None) -> str:
     return " ".join((s or "").split())
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def new_id(prefix: str, *parts) -> str:
@@ -237,9 +244,11 @@ class Store:
             if not line:
                 continue
             try:
-                out.append(json.loads(line))
+                rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if isinstance(rec, dict):
+                out.append(rec)
         return out
 
     # refs/atoms/<branch>.json — the moving atom_ref pointer (effective state)

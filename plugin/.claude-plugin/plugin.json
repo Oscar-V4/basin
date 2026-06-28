@@ -1,7 +1,7 @@
 {
   "name": "basin",
-  "version": "0.1.0",
-  "description": "Context configuration management for AI collaboration — capture Claude Code and Codex sessions, settle agreed context into a versioned Canon, compile Context Packs for new threads.",
+  "version": "0.1.3-alpha",
+  "description": "Context configuration management for AI collaboration — capture Claude Code and Codex sessions, review branches in a terminal cockpit, settle agreed context into a versioned Canon, and compile Context Packs for new threads.",
   "author": "basin",
   "license": "MIT",
   "commands": "./commands",

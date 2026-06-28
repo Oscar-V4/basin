@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from .core import Store, new_id, now_iso, sha256_hex, norm_ws, AUTHORITY_RANK
+from .core import Store, new_id, now_iso, sha256_hex, norm_ws, safe_float, AUTHORITY_RANK
 from . import fingerprint as fp
 
 
@@ -39,12 +39,17 @@ def create_checkpoint(store: Store, project_id: str, branch_id: str, kind: str,
                       raw_event_start_seq: int | None = None,
                       raw_event_end_seq: int | None = None,
                       title: str = "", summary_text: str = "",
-                      created_by: str = "hook") -> str:
+                      created_by: str = "hook",
+                      source_branch_id: str | None = None,
+                      merge_result: dict | None = None) -> str:
     # Deterministic id (no clock) so a re-fired hook with the same range dedups (P0-3),
     # but distinct enough that two real commits never collide (e.g. two saves with the
     # same message chain off different parents -> different id).
-    cid = new_id("ck", project_id, branch_id, kind, raw_event_start_seq, raw_event_end_seq,
-                 title, summary_text, parent_checkpoint_id)
+    id_parts = [project_id, branch_id, kind, raw_event_start_seq, raw_event_end_seq,
+                title, summary_text, parent_checkpoint_id]
+    if source_branch_id or merge_result is not None:
+        id_parts.extend([source_branch_id or "", merge_result or ""])
+    cid = new_id("ck", *id_parts)
     existing = {c.get("id") for c in store.read_jsonl(store.checkpoints_path) if c.get("t") == "checkpoint"}
     if cid not in existing:
         rec = {
@@ -54,6 +59,10 @@ def create_checkpoint(store: Store, project_id: str, branch_id: str, kind: str,
             "title": title, "summary_text": summary_text,
             "created_by": created_by, "created_at": now_iso(),
         }
+        if source_branch_id:
+            rec["source_branch_id"] = source_branch_id
+        if merge_result is not None:
+            rec["merge_result"] = merge_result
         store.append_jsonl(store.checkpoints_path, rec)
     store.set_branch_head(branch_id, cid)
     return cid
@@ -182,7 +191,7 @@ def current_atoms(store: Store, branch_id: str, lifecycles: tuple[str, ...] = ("
         rev["_eff_lifecycle"] = r.get("lifecycle_status")
         out.append(rev)
     out.sort(key=lambda a: (AUTHORITY_RANK.get(a.get("authority_tier"), 9),
-                            -float(a.get("confidence_score", 0)),
+                            -safe_float(a.get("confidence_score"), 0.0),
                             a.get("atom_type", ""), a.get("subject_key", "")))
     return out
 
@@ -424,25 +433,43 @@ def settle_branch(store: Store, branch_id: str, canon_branch: str,
     d = diff_branch_vs_canon(store, branch_id, canon_branch)
     merged, conflicts = 0, []
     candidates = [a for a in d["new"]] + [c["branch"] for c in d["changed"]]
+    new_atom_ids = [a["atom_id"] for a in d["new"]]
+    changed_atom_ids = [c["branch"]["atom_id"] for c in d["changed"]]
+    removed_atom_ids = [a["atom_id"] for a in d["removed"]]
+    forced_atom_ids = []
+    merged_atom_ids = []
+    merged_revisions = []
+    conflict_atom_ids = []
     seen = {a["atom_id"] for a in candidates}
     if force:                                  # --force also overrides resurrection conflicts
         for c in d.get("conflicts", []):
             if c["branch"]["atom_id"] not in seen:
-                candidates.append(c["branch"]); seen.add(c["branch"]["atom_id"])
+                candidates.append(c["branch"])
+                seen.add(c["branch"]["atom_id"])
+                forced_atom_ids.append(c["branch"]["atom_id"])
     for a in candidates:
         res = merge_atom(store, branch_id, canon_branch, a["atom_id"],
                          project_id=project_id, force=force)
         if res.get("status") == "merged":
             merged += 1
+            merged_atom_ids.append(a["atom_id"])
+            merged_revisions.append({"atom_id": a["atom_id"], "revision_id": a.get("id")})
         elif res.get("status") == "conflict":
             conflicts.append(res)
+            conflict_atom_ids.append(a["atom_id"])
     if not force:
         for c in d.get("conflicts", []):       # resurrection attempts flagged by the preview
             conflicts.append({"status": "conflict", "reason": c.get("reason"),
                               "atom_id": c["branch"]["atom_id"]})
+            conflict_atom_ids.append(c["branch"]["atom_id"])
     contradictions = _cross_type_contradictions(store, canon_branch, project_id)  # merged but flagged
     return {"merged": merged, "new": len(d["new"]), "changed": len(d["changed"]),
-            "conflicts": conflicts, "contradictions": contradictions}
+            "removed": len(d["removed"]), "conflicts": conflicts,
+            "contradictions": contradictions, "merged_atom_ids": merged_atom_ids,
+            "merged_revisions": merged_revisions,
+            "new_atom_ids": new_atom_ids, "changed_atom_ids": changed_atom_ids,
+            "removed_atom_ids": removed_atom_ids, "forced_atom_ids": forced_atom_ids,
+            "conflict_atom_ids": sorted(set(conflict_atom_ids))}
 
 
 # ---- edges ---------------------------------------------------------------

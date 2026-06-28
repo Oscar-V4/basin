@@ -6,7 +6,7 @@ data formats may still change.
 
 ## [Unreleased]
 
-## [0.1.2-alpha] — 2026-06-29
+## [0.1.3-alpha] — 2026-06-29
 
 ### Added — TUI cockpit polish
 - `basin tui` now renders fork/merge rail connectors, checkpoint diffstats, branch chips,
@@ -14,11 +14,20 @@ data formats may still change.
   and atoms (provenance, authority/confidence, supersedes chain, related edges).
 - The TUI renderer now uses stdlib-only terminal display-width helpers so Korean/CJK labels,
   combining marks, and right-aligned metadata stay aligned across the cockpit.
+- Merge checkpoints created by `basin settle` now persist the source branch and merge-result
+  metadata so the cockpit can show non-empty merge diffstats and merged atoms.
+
+### Fixed — adversarial release review
+- TUI and projection paths now fail soft on malformed `confidence_score` values instead of
+  crashing during sorting or rendering.
+- JSONL readers ignore valid JSON values that are not object records, keeping a bad line from
+  breaking TUI startup or graph indexing.
 
 ### Changed
 - Refreshed the README, concepts guide, Git comparison, and plugin metadata so the
   product description matches the current Claude Code + Codex capture model and the
   context-history cockpit direction.
+- Bumped engine, CLI, installer, and plugin release metadata for `0.1.3-alpha`.
 
 ## [0.1.1-alpha] — 2026-06-29
 

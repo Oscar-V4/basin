@@ -201,9 +201,12 @@ def cmd_settle(args):
     canon = _resolve_branch(store, store.config().get("canon_branch", "main"))
     branch = _resolve_branch(store, args.branch)
     res = ops.settle_branch(store, branch, canon, project_id=pid, force=args.force)
+    summary = (f"+{res['new']} new, ~{res['changed']} changed, "
+               f"{len(res.get('conflicts', []))} conflict(s)")
     ops.create_checkpoint(store, pid, canon, kind="merge",
                           parent_checkpoint_id=store.get_branch_head(canon),
-                          title=f"settle {args.branch}", created_by="user")
+                          title=f"settle {args.branch}", summary_text=summary,
+                          created_by="user", source_branch_id=branch, merge_result=res)
     project.project_canon(store)
     reindex.reindex(store)
     print(f"settle: merged {res['merged']} atoms from {args.branch} into canon "

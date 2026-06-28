@@ -10,7 +10,7 @@ import time
 import calendar
 import unicodedata
 
-from .core import Store, AUTHORITY_RANK
+from .core import Store, safe_float
 from . import ops
 
 TABS = ["Threads", "Branches", "Changes", "Canon", "Proposals", "Map"]
@@ -97,6 +97,17 @@ def row_text(segs, gap="  "):
     return text
 
 
+def confidence_text(value) -> str:
+    return f"{round(safe_float(value, 0.0), 2):.2f}"
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def rel_time(iso: str) -> str:
     if not iso:
         return ""
@@ -117,10 +128,9 @@ def rel_time(iso: str) -> str:
 def infer_merge_source_branch(checkpoint, branch_by_name, branch_by_id):
     """Infer a merge source branch for legacy checkpoints.
 
-    Merge checkpoints do not yet persist `source_branch_id`, so the TUI can only
-    recover the source from the CLI-era title convention: `settle <branch>`.
-    Keep that compatibility parsing here until the checkpoint schema grows an
-    explicit field.
+    New merge checkpoints persist `source_branch_id`; older checkpoints only
+    have the CLI-era title convention, `settle <branch>`, so keep that parser as
+    a compatibility fallback.
     """
     if checkpoint.get("kind") != "merge":
         return None
@@ -177,12 +187,15 @@ class Model:
         self._revs_by_checkpoint = {}
         for atom_id in self.store.all_atom_ids():
             for rev in self.store.read_jsonl(self.store.atom_path(atom_id)):
+                if not isinstance(rev, dict):
+                    continue
                 if rev.get("t") != "atom_revision":
                     continue
                 ck = rev.get("checkpoint_id")
                 if ck:
                     self._revs_by_checkpoint.setdefault(ck, []).append(rev)
-        self._edges = [e for e in self.store.read_jsonl(self.store.edges_path) if e.get("t") == "edge"]
+        self._edges = [e for e in self.store.read_jsonl(self.store.edges_path)
+                       if isinstance(e, dict) and e.get("t") == "edge"]
 
     def _lane_style(self, branch_id):
         return LANE_STYLES[self.lane_of.get(branch_id, 0) % len(LANE_STYLES)]
@@ -202,14 +215,21 @@ class Model:
         return (f" {label} ", _BADGE_STYLE.get(t, "badge_fact"))
 
     def _atom_meta(self, atom):
-        conf = round(float(atom.get("confidence_score", 0) or 0), 2)
-        bits = [atom.get("authority_tier", "") or "unknown", f"{conf:.2f}"]
+        bits = [atom.get("authority_tier", "") or "unknown", confidence_text(atom.get("confidence_score"))]
         rt = rel_time(atom.get("created_at", ""))
         if rt:
             bits.append(rt)
         return " · ".join(bits)
 
+    def _merge_result(self, checkpoint):
+        result = checkpoint.get("merge_result")
+        return result if isinstance(result, dict) else {}
+
     def _checkpoint_diffstat(self, checkpoint):
+        if checkpoint.get("kind") == "merge":
+            result = self._merge_result(checkpoint)
+            if result:
+                return _safe_int(result.get("new")), _safe_int(result.get("changed")), 0
         added = changed = removed = 0
         for rev in self._revs_by_checkpoint.get(checkpoint.get("id"), []):
             ck = rev.get("change_kind")
@@ -527,6 +547,36 @@ class Model:
             return None
         return self.store.get_revision(atom_id, ref.get("current_revision_id"))
 
+    def _merge_checkpoint_atoms(self, checkpoint):
+        result = self._merge_result(checkpoint)
+        out, seen = [], set()
+        records = result.get("merged_revisions") or []
+        if isinstance(records, list):
+            for rec in records:
+                if not isinstance(rec, dict):
+                    continue
+                atom_id = rec.get("atom_id")
+                revision_id = rec.get("revision_id")
+                if not atom_id or not revision_id or atom_id in seen:
+                    continue
+                rev = self.store.get_revision(atom_id, revision_id)
+                if rev:
+                    seen.add(atom_id)
+                    out.append(rev)
+            if out:
+                return out
+        ids = result.get("merged_atom_ids") or []
+        if not ids:
+            ids = (result.get("new_atom_ids") or []) + (result.get("changed_atom_ids") or []) + (result.get("forced_atom_ids") or [])
+        for atom_id in ids:
+            if atom_id in seen:
+                continue
+            seen.add(atom_id)
+            rev = self._atom_for_branch(atom_id, checkpoint.get("branch_id")) or self.store.latest_revision(atom_id)
+            if rev:
+                out.append(rev)
+        return out
+
     def _checkpoint_detail(self, checkpoint):
         branch_id = checkpoint.get("branch_id")
         added, changed, removed = self._checkpoint_diffstat(checkpoint)
@@ -554,14 +604,23 @@ class Model:
             rows.append([("merged from ", "dim"), self._branch_chip(source_branch)])
 
         revs = self._revs_by_checkpoint.get(checkpoint.get("id"), [])
+        merge_revs = self._merge_checkpoint_atoms(checkpoint) if checkpoint.get("kind") == "merge" else []
         rows.append([("", "normal")])
-        rows.append([("Atoms in checkpoint", "header")])
+        rows.append([("Merged atoms" if merge_revs else "Atoms in checkpoint", "header")])
         if revs:
             for rev in revs[:8]:
                 rows.append([("  ", "normal"), self._atom_badge(rev), (" ", "normal"),
                              (rev.get("statement", "")[:110], "normal")])
             if len(revs) > 8:
                 rows.append([(f"  … {len(revs) - 8} more", "muted")])
+        elif merge_revs:
+            for rev in merge_revs[:8]:
+                rows.append([("  ", "normal"), self._atom_badge(rev), (" ", "normal"),
+                             (rev.get("statement", "")[:110], "normal")])
+            if len(merge_revs) > 8:
+                rows.append([(f"  … {len(merge_revs) - 8} more", "muted")])
+        elif checkpoint.get("kind") == "merge" and source_branch:
+            rows.append([("  merge metadata unavailable for this legacy checkpoint", "muted")])
         else:
             rows.append([("  no atom revisions recorded on this checkpoint", "muted")])
         return rows
@@ -577,7 +636,7 @@ class Model:
              ("  change ", "dim"), (atom.get("change_kind", ""), "normal")],
             [("Authority / confidence ", "header"),
              (atom.get("authority_tier", "") or "unknown", "normal"),
-             (" · ", "dim"), (f"{round(float(atom.get('confidence_score', 0) or 0), 2):.2f}", "normal")],
+             (" · ", "dim"), (confidence_text(atom.get("confidence_score")), "normal")],
         ]
         if atom.get("checkpoint_id") or atom.get("source_raw_event_id") or atom.get("created_by"):
             rows.append([("Provenance ", "header"),

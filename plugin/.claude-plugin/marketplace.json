@@ -1,13 +1,13 @@
 {
   "name": "basin",
   "owner": "basin",
-  "metadata": { "description": "Context configuration management for Claude Code and Codex collaboration." },
+  "metadata": { "description": "Context configuration management for Claude Code and Codex collaboration, with a terminal cockpit for context history." },
   "plugins": [
     {
       "name": "basin",
       "source": "./",
-      "version": "0.1.0",
-      "description": "Capture sessions, settle agreed context into a versioned Canon, and compile Context Packs for new threads. NOTE: the Claude Code plugin loader surfaces slash commands only — for Claude hooks run `./plugin/install.sh`; for Codex hooks run `./plugin/install-codex.sh` from the repo."
+      "version": "0.1.3-alpha",
+      "description": "Capture sessions, inspect branch history in `basin tui`, settle agreed context into a versioned Canon, and compile Context Packs for new threads. NOTE: the Claude Code plugin loader surfaces slash commands only — for Claude hooks run `./plugin/install.sh`; for Codex hooks run `./plugin/install-codex.sh` from the repo."
     }
   ]
 }

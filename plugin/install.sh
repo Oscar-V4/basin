@@ -106,7 +106,7 @@ if [ "$DRY" -eq 0 ]; then
   python3 - "$CLAUDE_DIR/.basin-meta.json" "$REPO_DIR" "$ENGINE_DIR" <<'PY'
 import json, sys, time
 meta_p, repo, engine = sys.argv[1], sys.argv[2], sys.argv[3]
-json.dump({"repo": repo, "engine": engine, "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "version": "0.1.0"},
+json.dump({"repo": repo, "engine": engine, "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "version": "0.1.3-alpha"},
           open(meta_p, "w", encoding="utf-8"), indent=2)
 PY
 fi

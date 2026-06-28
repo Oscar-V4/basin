@@ -12,7 +12,7 @@ from basin import core, ops, fork  # noqa: E402
 from basin.tui import _layout_segments  # noqa: E402
 from basin.tui_model import (  # noqa: E402
     Model, TABS, RIGHT_ALIGN, display_width, fit_display_width,
-    infer_merge_source_branch, row, row_text, split_row,
+    confidence_text, infer_merge_source_branch, row, row_text, split_row,
 )
 
 _fails = []
@@ -79,17 +79,26 @@ def build_fixture():
                    "readme-tui-status", "assistant_proposed",
                    source_raw_event_id="re_docs_7", confidence_score=0.68)
     ops.promote_branch(store, docs)
-    ops.settle_branch(store, docs, main, project_id=pid)
+    merge_result = ops.settle_branch(store, docs, main, project_id=pid)
     ops.create_checkpoint(store, pid, main, "merge",
                           parent_checkpoint_id=store.get_branch_head(main),
-                          title="settle 문서", created_by="user")
+                          title="settle 문서", summary_text="+1 new, ~0 changed, 0 conflict(s)",
+                          created_by="user", source_branch_id=docs, merge_result=merge_result)
 
     ops.stage_atom(store, pid, main, None, "decision",
                    "Basin's TUI should prioritize proposal review before graph polish.",
                    "tui-history", "user_explicit", confidence_score=0.91)
+    ops.stage_atom(store, pid, main, None, "task",
+                   "Document the TUI cockpit status in README and docs.",
+                   "readme-tui-status", "assistant_proposed",
+                   confidence_score=0.72)
+    bad_conf = ops.stage_atom(store, pid, main, None, "task",
+                              "TUI should tolerate malformed confidence scores.",
+                              "bad-confidence", "tool_observed",
+                              confidence_score="high")[0]
     ops.promote_branch(store, main)
     return store, tmp, {"main": main, "cockpit": cockpit, "docs": docs,
-                        "decision": decision, "changed": changed}
+                        "decision": decision, "changed": changed, "bad_conf": bad_conf}
 
 
 def styles(rows):
@@ -97,13 +106,36 @@ def styles(rows):
 
 
 def main():
+    compat_tmp = tempfile.mkdtemp(prefix="basin_ck_compat_")
+    compat_store = core.Store(compat_tmp)
+    compat_store.scaffold({"project_id": "p_compat", "project_name": "compat"})
+    compat_ck = ops.create_checkpoint(compat_store, "p_compat", "main", "manual", title="compat")
+    legacy_ck = core.new_id("ck", "p_compat", "main", "manual", None, None, "compat", "", None)
+    check("Checkpoint ids: optional metadata absent preserves legacy id", compat_ck == legacy_ck,
+          "" if compat_ck == legacy_ck else f"{compat_ck} != {legacy_ck}")
+
     store, tmp, ids = build_fixture()
-    m = Model(tmp)
+    with open(store.edges_path, "a", encoding="utf-8") as f:
+        f.write('"bad edge row"\n')
+    with open(store.atom_path(ids["decision"]), "a", encoding="utf-8") as f:
+        f.write('"bad atom row"\n')
+    try:
+        m = Model(tmp)
+        startup_crashed = False
+    except Exception as e:  # noqa
+        startup_crashed = True
+        print("   startup error:", e)
+        m = None
+    check("Startup: non-object JSONL rows are ignored", not startup_crashed)
+    if startup_crashed:
+        return 1
 
     check("Display width: Korean glyphs use terminal cells",
           display_width("브랜치") == 6 and display_width("문서 · meta") == 11)
     check("Display width: combining marks do not advance columns",
           display_width("e\u0301") == 1 and fit_display_width("e\u0301x", 1) == "e\u0301")
+    check("Confidence: malformed scores render as 0.00",
+          confidence_text("high") == "0.00" and "0.00" in m._atom_meta({"confidence_score": "high"}))
     draws = _layout_segments(1, 20, row([("왼쪽 meta", "normal")], [("문서", "muted")]))
     right_draw = next((d for d in draws if d[2] == "muted"), None)
     check("Renderer: RIGHT_ALIGN places Korean meta by display width",
@@ -119,6 +151,9 @@ def main():
           flat_threads)
     check("Threads: checkpoint diffstat renders",
           "+1 ~1 −0" in flat_threads or "+2 ~0 −0" in flat_threads, flat_threads)
+    merge_thread_row = next((row_text(r) for r in threads if "settle 문서" in row_text(r)), "")
+    check("Threads: merge checkpoint diffstat uses merge metadata",
+          "+1 ~0 −0" in merge_thread_row, merge_thread_row)
 
     branch_rows = m.branches_rows()
     canon_rows = m.canon_rows()
@@ -144,9 +179,20 @@ def main():
           and "supersedes" in detail_text and "refines" in detail_text, detail_text)
 
     merge_checkpoint = next(c for c in m.checkpoints if c.get("kind") == "merge")
+    legacy_merge = {"kind": "merge", "title": "settle 문서"}
     check("Merge source: legacy settle-title inference resolves Korean branch name",
+          infer_merge_source_branch(legacy_merge, m.branch_by_name, m.branch_by_id) == ids["docs"],
+          str(legacy_merge))
+    check("Merge source: persisted source_branch_id wins when present",
           infer_merge_source_branch(merge_checkpoint, m.branch_by_name, m.branch_by_id) == ids["docs"],
           str(merge_checkpoint))
+    merge_idx = next(i for i, c in enumerate(m._threads_row_checkpoints) if c and c.get("kind") == "merge")
+    merge_detail = "\n".join(row_text(r) for r in m.detail_rows("Threads", merge_idx))
+    check("Details: merge checkpoint lists merged atoms",
+          "Merged atoms" in merge_detail and "Document the TUI cockpit status" in merge_detail
+          and "README and docs" not in merge_detail
+          and "no atom revisions recorded" not in merge_detail,
+          merge_detail)
 
     for tab in TABS:
         try:

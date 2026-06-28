@@ -22,7 +22,7 @@ Atom identity is content-addressed on `(project, type, subject)`, so the same id
 
 ## Canon
 
-The settled source of truth for a project, projected to a human-readable `canon/CANON.md`. Branches explore; the Canon is what has settled. Promoting a branch's atoms into the Canon is a deliberate act (`basin save`, then merge proposals), never automatic.
+The settled source of truth for a project, projected to a human-readable `canon/CANON.md`. Branches explore; the Canon is what has settled. Promoting context is a deliberate act: `basin save` promotes staged atoms on the current branch, while `basin reconcile --branch X` and `basin settle --branch X` preview and apply a fork's clean changes into Canon.
 
 ## Branch and fork
 
@@ -33,6 +33,12 @@ Fork detection (opt-in) finds the parent by the **longest common prefix** of the
 ## Checkpoint
 
 A commit — a captured context transition, not the raw transcript itself. Kinds: `manual`, `pre_compact`, `turn_end`, `session_end`, `semantic_commit`, `merge`, `release_build`, `fork_point`. The `pre_compact` checkpoint is special: it fires the instant before a context window compresses, which is exactly when context is usually lost. `turn_end` is the Codex-friendly capture point for hosts that fire after each turn; repeated hooks with no new transcript events do not create checkpoints.
+
+## TUI cockpit
+
+`basin tui` is the local cockpit for reading context history. Threads shows fork and merge lanes with checkpoint diffstats; Branches switches workrooms; Changes and Proposals show unsettled atoms; Canon shows the settled truth; Map shows graph clusters after `basin graph`.
+
+The cockpit is still backed by the same append-only files. Pressing Enter opens detail panels for checkpoints and atoms so provenance, authority/confidence, supersedes chains, related edges, and merge metadata are visible without rereading the transcript.
 
 ## Host integrations
 
