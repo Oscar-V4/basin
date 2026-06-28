@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -122,11 +123,97 @@ def test_codex_hook_contract(tmp):
           f"checkpoints={checkpoints} sessions={sessions}")
 
 
+def test_codex_session_end_without_start_preserves_provider(tmp):
+    store = core.Store(tmp)
+    store.scaffold({"project_id": "p_codex_end", "project_name": "codex-end"})
+    old = sys.stdin
+    try:
+        sys.stdin = io.StringIO(json.dumps({
+            "hook_event_name": "SessionEnd",
+            "session_id": "codex-end-only",
+            "cwd": tmp,
+        }))
+        rc = hook.run_codex("auto")
+    finally:
+        sys.stdin = old
+
+    sessions = store.read_jsonl(store.sessions_path)
+    check("codex hook: SessionEnd without SessionStart preserves provider",
+          rc == 0
+          and sessions
+          and sessions[-1].get("provider") == "codex"
+          and sessions[-1].get("status") == "ended",
+          str(sessions))
+
+
+def test_codex_installer_tolerates_empty_hook_entries(tmp):
+    repo = os.path.dirname(ENGINE)
+    codex_dir = os.path.join(tmp, "codex-home")
+    os.makedirs(codex_dir, exist_ok=True)
+    hooks_path = os.path.join(codex_dir, "hooks.json")
+    with open(hooks_path, "w", encoding="utf-8") as f:
+        json.dump({"hooks": {"Stop": [
+            {"hooks": []},
+            {"hooks": [
+                {"type": "command", "command": "existing", "timeout": 1},
+                {"type": "command", "command": "~/.codex/hooks/basin-codex-turn-end.sh", "timeout": 10},
+            ]},
+        ]}}, f)
+
+    env = dict(os.environ)
+    env["CODEX_DIR"] = codex_dir
+    res = subprocess.run(["bash", os.path.join(repo, "plugin", "install-codex.sh"), "--no-pip", "--copy"],
+                         env=env, capture_output=True, text=True, timeout=20)
+    merged = json.load(open(hooks_path, encoding="utf-8"))
+    stop_entries = merged.get("hooks", {}).get("Stop", [])
+    turn_end_count = sum(
+        hook.get("command") == "~/.codex/hooks/basin-codex-turn-end.sh"
+        for entry in stop_entries
+        for hook in entry.get("hooks", [])
+    )
+    check("codex installer: empty existing hook entry does not crash",
+          res.returncode == 0 and turn_end_count == 1,
+          res.stderr or str(merged))
+
+
+def test_claude_installer_tolerates_empty_hook_entries(tmp):
+    repo = os.path.dirname(ENGINE)
+    claude_dir = os.path.join(tmp, "claude-home")
+    os.makedirs(claude_dir, exist_ok=True)
+    settings_path = os.path.join(claude_dir, "settings.json")
+    with open(settings_path, "w", encoding="utf-8") as f:
+        json.dump({"hooks": {"SessionStart": [
+            {"hooks": []},
+            {"hooks": [
+                {"type": "command", "command": "existing", "timeout": 1},
+                {"type": "command", "command": "~/.claude/hooks/basin-session-start.sh", "timeout": 10},
+            ]},
+        ]}}, f)
+
+    env = dict(os.environ)
+    env["CLAUDE_DIR"] = claude_dir
+    res = subprocess.run(["bash", os.path.join(repo, "plugin", "install.sh"), "--no-pip", "--copy"],
+                         env=env, capture_output=True, text=True, timeout=20)
+    merged = json.load(open(settings_path, encoding="utf-8"))
+    session_entries = merged.get("hooks", {}).get("SessionStart", [])
+    session_start_count = sum(
+        hook.get("command") == "~/.claude/hooks/basin-session-start.sh"
+        for entry in session_entries
+        for hook in entry.get("hooks", [])
+    )
+    check("claude installer: empty existing hook entry does not crash",
+          res.returncode == 0 and session_start_count == 1,
+          res.stderr or str(merged))
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="basin_codex_")
     test_parse_codex(tmp)
     test_parse_claude_regression(tmp)
     test_codex_hook_contract(tmp)
+    test_codex_session_end_without_start_preserves_provider(tmp)
+    test_codex_installer_tolerates_empty_hook_entries(tmp)
+    test_claude_installer_tolerates_empty_hook_entries(tmp)
     print("\n" + ("ALL PASS" if not _fails else f"FAILED: {_fails}"))
     print(f"workdir: {tmp}")
     return 1 if _fails else 0

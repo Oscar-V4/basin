@@ -16,6 +16,9 @@ data formats may still change.
   and `Stop`). `Stop` is recorded as `turn_end` capture instead of finalizing the session.
 - Added Codex adapter regression tests covering synthetic rollout parsing, Claude Code parser
   compatibility, provider registration, and turn-end checkpoint behavior.
+- Adversarial review hardening: Codex `SessionEnd` fallback now preserves the `codex`
+  provider even when no prior `SessionStart` record exists, and both installers tolerate
+  empty pre-existing hook entries while merging settings.
 
 ### Fixed — post-release hardening (7-dimension adversarial audit)
 - **Security:** `safe_id()` sanitizes every external id (`session_id`/`branch_id`)

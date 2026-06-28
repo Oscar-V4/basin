@@ -297,7 +297,8 @@ def list_sessions(store: Store) -> list[dict]:
 
 
 def end_session(store: Store, project_id: str, external_session_id: str, branch_id: str,
-                transcript_path: str = "", cwd: str = "") -> bool:
+                transcript_path: str = "", cwd: str = "",
+                provider: str = "claude_code") -> bool:
     """Mark a session ended. Updates the latest record, or registers one if the
     session was never seen (engine enabled mid-session)."""
     latest = None
@@ -312,7 +313,8 @@ def end_session(store: Store, project_id: str, external_session_id: str, branch_
         store.append_jsonl(store.sessions_path, rec)
     else:
         register_session(store, project_id, external_session_id, branch_id,
-                         transcript_path=transcript_path, cwd=cwd, status="ended")
+                         transcript_path=transcript_path, cwd=cwd, status="ended",
+                         provider=provider)
     return True
 
 

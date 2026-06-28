@@ -78,13 +78,21 @@ if os.path.exists(settings_p) and os.path.getsize(settings_p) > 0:
         sys.exit(1)
     shutil.copy2(settings_p, settings_p + ".basin.bak")  # backup before edit
 hooks = settings.setdefault("hooks", {})
-def cmd_of(h): return h.get("hooks", [{}])[0].get("command")
+def cmds_of(h):
+    hooks = h.get("hooks") if isinstance(h, dict) else []
+    if not isinstance(hooks, list):
+        return set()
+    return {x.get("command") for x in hooks if isinstance(x, dict) and x.get("command")}
 for event, entries in partial.get("hooks", {}).items():
     cur = hooks.setdefault(event, [])
-    have = {cmd_of(e) for e in cur}
+    have = set()
+    for e in cur:
+        have.update(cmds_of(e))
     for e in entries:
-        if cmd_of(e) not in have:
+        entry_cmds = cmds_of(e)
+        if not entry_cmds.intersection(have):
             cur.append(e)
+            have.update(entry_cmds)
 tmp = settings_p + ".tmp"
 with open(tmp, "w", encoding="utf-8") as f:
     json.dump(settings, f, indent=2, ensure_ascii=False)

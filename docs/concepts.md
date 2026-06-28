@@ -30,7 +30,7 @@ Fork detection (opt-in) finds the parent by the **longest common prefix** of the
 
 ## Checkpoint
 
-A commit — a *semantic state transition*, not a chat turn. Kinds: `manual`, `pre_compact`, `session_end`, `semantic_commit`, `merge`, `release_build`, `fork_point`. The `pre_compact` checkpoint is special: it fires the instant before a context window compresses, which is exactly when context is usually lost.
+A commit — a captured context transition, not the raw transcript itself. Kinds: `manual`, `pre_compact`, `turn_end`, `session_end`, `semantic_commit`, `merge`, `release_build`, `fork_point`. The `pre_compact` checkpoint is special: it fires the instant before a context window compresses, which is exactly when context is usually lost. `turn_end` is the Codex-friendly capture point for hosts that fire after each turn; repeated hooks with no new transcript events do not create checkpoints.
 
 ## Context Pack
 

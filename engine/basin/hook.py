@@ -81,7 +81,7 @@ def _run_with_hook(mode: str, hook: dict, provider: str) -> int:
     # No new content → no checkpoint, no head churn (P0-3). Still finalize on session end.
     if not new_events:
         if mode == "session_end":
-            ops.end_session(store, project_id, session_id, branch_id, transcript, root)
+            ops.end_session(store, project_id, session_id, branch_id, transcript, root, provider=provider)
             reindex.reindex(store)
         return 0
 
@@ -93,7 +93,7 @@ def _run_with_hook(mode: str, hook: dict, provider: str) -> int:
     extract_det.extract_events(store, project_id, branch_id, ck, new_events)
 
     if mode == "session_end":
-        ops.end_session(store, project_id, session_id, branch_id, transcript, root)
+        ops.end_session(store, project_id, session_id, branch_id, transcript, root, provider=provider)
         reindex.reindex(store)
         project.project_all(store)
     return 0
