@@ -6,9 +6,19 @@ data formats may still change.
 
 ## [Unreleased]
 
+## [0.1.2-alpha] — 2026-06-29
+
+### Added — TUI cockpit polish
+- `basin tui` now renders fork/merge rail connectors, checkpoint diffstats, branch chips,
+  atom/conflict badges, right-aligned meta columns, and Enter detail panels for checkpoints
+  and atoms (provenance, authority/confidence, supersedes chain, related edges).
+- The TUI renderer now uses stdlib-only terminal display-width helpers so Korean/CJK labels,
+  combining marks, and right-aligned metadata stay aligned across the cockpit.
+
 ### Changed
 - Refreshed the README, concepts guide, Git comparison, and plugin metadata so the
-  product description matches the current Claude Code + Codex capture model.
+  product description matches the current Claude Code + Codex capture model and the
+  context-history cockpit direction.
 
 ## [0.1.1-alpha] — 2026-06-29
 

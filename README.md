@@ -111,7 +111,7 @@ More in [docs/concepts.md](docs/concepts.md) and [docs/comparison-to-git.md](doc
 | Storage — append-only JSONL truth + Markdown/YAML projections + rebuildable SQLite index | ✅ working |
 | Claude Code integration — hooks (session-start / pre-compact / session-end), slash commands, `install.sh` | ✅ working |
 | Codex integration — rollout transcript adapter + hooks (session-start / pre-compact / turn-end), `install-codex.sh` | ✅ working |
-| `basin tui` — Threads lane graph, Branches, Changes, Canon, Proposals | ✅ working |
+| `basin tui` — cockpit with rail graph, branch chips, atom badges, aligned meta, and detail panels | ✅ working |
 | Context graph clustering (stable community ids) | ✅ working |
 | Detached LLM refiner (`basin worker`) | 🧪 opt-in — `BASIN_LLM=codex` (gpt-5.5) or `=1` (legacy `claude -p`, now API-only) |
 | Automatic fork detection | 🧪 opt-in (`auto_fork`); explicit `basin fork` is the reliable path |
