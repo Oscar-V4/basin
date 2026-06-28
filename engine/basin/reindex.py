@@ -5,6 +5,7 @@ The index is disposable: `basin reindex` rebuilds it from files. Lossless if del
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -20,9 +21,12 @@ def _cols(table_sql_fields: list[str]):
 def reindex(store: Store) -> dict:
     db_path = store.index_db
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    if db_path.exists():
-        db_path.unlink()
-    con = sqlite3.connect(db_path)
+    # Build into a private temp DB, then atomically swap — readers never see a
+    # tableless/half-built index, and concurrent reindexers don't clobber each other.
+    tmp_path = db_path.with_name(f"basin.build.{os.getpid()}.db")
+    if tmp_path.exists():
+        tmp_path.unlink()
+    con = sqlite3.connect(tmp_path)
     con.executescript(_SCHEMA.read_text(encoding="utf-8"))
     counts = {}
 
@@ -100,6 +104,7 @@ def reindex(store: Store) -> dict:
     n_tables = con.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
     n_views = con.execute("SELECT count(*) FROM sqlite_master WHERE type='view'").fetchone()[0]
     con.close()
+    os.replace(tmp_path, db_path)  # atomic swap
     counts["_tables"] = n_tables
     counts["_views"] = n_views
     return counts

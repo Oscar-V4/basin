@@ -55,6 +55,7 @@ def cmd_save(args):
     branch = args.branch or store.config().get("canon_branch", "main")
     n = ops.promote_branch(store, branch)
     ck = ops.create_checkpoint(store, pid, branch, kind="semantic_commit",
+                               parent_checkpoint_id=store.get_branch_head(branch),
                                title=args.message or "save", created_by="user")
     project.append_ledger(store, branch, args.message or "", n)
     project.project_branch(store, branch)
@@ -176,6 +177,47 @@ def cmd_reconcile(args):
         print(f"  ~ {c['branch']['statement'][:80]}")
 
 
+def _resolve_branch(store, name):
+    byname = {b["name"]: b for b in ops.list_branches(store)}
+    return byname[name]["branch_id"] if name in byname else name
+
+
+def cmd_ignore(args):
+    store = _store(args)
+    pid = store.config()["project_id"]
+    branch = _resolve_branch(store, args.branch or store.config().get("canon_branch", "main"))
+    dnl = ops.set_do_not_load(store, pid, branch, args.atom, action=args.action, reason=args.reason or "")
+    reindex.reindex(store)
+    print(f"ignore: {args.action} atom {args.atom} on {branch} ({dnl})")
+
+
+def cmd_settle(args):
+    store = _store(args)
+    canon = _resolve_branch(store, store.config().get("canon_branch", "main"))
+    branch = _resolve_branch(store, args.branch)
+    res = ops.settle_branch(store, branch, canon)
+    ops.create_checkpoint(store, store.config()["project_id"], canon, kind="merge",
+                          parent_checkpoint_id=store.get_branch_head(canon),
+                          title=f"settle {args.branch}", created_by="user")
+    project.project_canon(store)
+    reindex.reindex(store)
+    print(f"settle: merged {res['merged']} atoms from {args.branch} into canon "
+          f"(+{res['new']} new, ~{res['changed']} changed)")
+
+
+def cmd_doctor(args):
+    from . import doctor
+    rep = doctor.run(_store(args))
+    print(f"doctor: {'OK' if rep['ok'] else 'ISSUES'} · {rep['atoms']} atoms · {rep['branches']} branches")
+    for m in rep["errors"]:
+        print(f"  ✗ {m}")
+    for m in rep["warnings"]:
+        print(f"  ! {m}")
+    if rep["ok"] and not rep["warnings"]:
+        print("  clean.")
+    return 0 if rep["ok"] else 1
+
+
 def cmd_tui(args):
     from . import tui
     return tui.main(args.root, argv=(["--selftest"] if args.selftest else []))
@@ -205,6 +247,9 @@ def build_parser():
     s = sub.add_parser("graph"); s.set_defaults(func=cmd_graph)
     s = sub.add_parser("worker"); s.add_argument("--session", required=True); s.add_argument("--branch"); s.set_defaults(func=cmd_worker)
     s = sub.add_parser("reconcile"); s.add_argument("--branch", required=True); s.set_defaults(func=cmd_reconcile)
+    s = sub.add_parser("settle"); s.add_argument("--branch", required=True); s.set_defaults(func=cmd_settle)
+    s = sub.add_parser("ignore"); s.add_argument("--atom", required=True); s.add_argument("--branch"); s.add_argument("--action", default="exclude", choices=["exclude", "retrieve_only", "allow"]); s.add_argument("--reason"); s.set_defaults(func=cmd_ignore)
+    s = sub.add_parser("doctor"); s.set_defaults(func=cmd_doctor)
     s = sub.add_parser("tui"); s.add_argument("--selftest", action="store_true"); s.set_defaults(func=cmd_tui)
     s = sub.add_parser("on"); s.set_defaults(func=cmd_toggle, on=True)
     s = sub.add_parser("off"); s.set_defaults(func=cmd_toggle, on=False)

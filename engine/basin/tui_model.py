@@ -11,7 +11,7 @@ import time
 from .core import Store, AUTHORITY_RANK
 from . import ops
 
-TABS = ["Threads", "Branches", "Changes", "Canon", "Proposals"]
+TABS = ["Threads", "Branches", "Changes", "Canon", "Proposals", "Map"]
 LANE_STYLES = ["laneA", "laneB", "laneC", "laneD", "laneE"]
 
 # atom type -> (Section title) for Canon / grouping
@@ -66,7 +66,7 @@ class Model:
         self.branch_name = {b["branch_id"]: b.get("name", b["branch_id"]) for b in self.branches}
 
     # ---- helpers ----
-    def _atoms(self, branch_id, lifecycles=("active", "tracked", "released")):
+    def _atoms(self, branch_id, lifecycles=("active", "released")):
         return ops.current_atoms(self.store, branch_id, lifecycles=lifecycles)
 
     def status_line(self):
@@ -168,28 +168,52 @@ class Model:
 
     # ---- PROPOSALS (branch -> canon diff) ----
     def proposals_rows(self):
+        # row-aligned merge targets (reset first so a canon-branch view can't reuse stale ones)
+        rows, self._proposal_row_atoms = [], []
+
+        def add(segs, atom_id=None):
+            rows.append(segs)
+            self._proposal_row_atoms.append(atom_id)
+
         if self.current_branch == self._canon_id():
-            return [[("Switch to a branch (Branches tab, enter) to see merge proposals.", "muted")]]
+            add([("Switch to a branch (Branches tab, enter) to see merge proposals.", "muted")])
+            return rows
         d = ops.diff_branch_vs_canon(self.store, self.current_branch, self._canon_id())
-        rows = []
-        self._proposal_atoms = []
         if d["new"]:
-            rows.append([("+ New — will be added to Canon", "header")])
+            add([("+ New — will be added to Canon", "header")])
             for a in d["new"]:
-                rows.append([("  + ", "green"), (a.get("statement", "")[:200], "normal")])
-                self._proposal_atoms.append(a["atom_id"])
+                add([("  + ", "green"), (a.get("statement", "")[:200], "normal")], a["atom_id"])
         if d["changed"]:
-            rows.append([("~ Changed — will supersede Canon", "header")])
+            add([("~ Changed — will supersede Canon", "header")])
             for c in d["changed"]:
-                rows.append([("  ~ ", "yellow"), (c["branch"].get("statement", "")[:200], "normal")])
-                self._proposal_atoms.append(c["branch"]["atom_id"])
+                add([("  ~ ", "yellow"), (c["branch"].get("statement", "")[:200], "normal")], c["branch"]["atom_id"])
         if d["removed"]:
-            rows.append([("− Only in Canon (unchanged here)", "header")])
+            add([("− Only in Canon (unchanged here)", "header")])
             for a in d["removed"]:
-                rows.append([("  · ", "muted"), (a.get("statement", "")[:200], "dim")])
-        if not rows:
-            rows = [[("No differences from Canon.", "muted")]]
+                add([("  · ", "muted"), (a.get("statement", "")[:200], "dim")])
+        if not (d["new"] or d["changed"] or d["removed"]):
+            add([("No differences from Canon.", "muted")])
         return rows
+
+    # ---- MAP (context graph clusters from graph.py) ----
+    def map_rows(self):
+        import json
+        p = self.store.dir / "clusters.json"
+        if not p.exists():
+            return [[("Run `basin graph` to build the context map.", "muted")]]
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return [[("clusters.json unreadable — re-run `basin graph`.", "muted")]]
+        rows = []
+        for c in data.get("clusters", []):
+            rows.append([(f"◆ {c.get('name', 'misc')}", "header"), (f"  ({c.get('size', 0)})", "muted")])
+            for aid in c.get("atoms", [])[:8]:
+                rev = self.store.latest_revision(aid)
+                if rev:
+                    rows.append([("   • ", "muted"), (rev.get("statement", "")[:90], "normal")])
+            rows.append([("", "normal")])
+        return rows or [[("No clusters yet.", "muted")]]
 
     def _canon_id(self):
         byname = {b["name"]: b for b in self.branches}
@@ -222,5 +246,5 @@ class Model:
         return {
             "Threads": self.threads_rows, "Branches": self.branches_rows,
             "Changes": self.changes_rows, "Canon": self.canon_rows,
-            "Proposals": self.proposals_rows,
+            "Proposals": self.proposals_rows, "Map": self.map_rows,
         }[tab]()

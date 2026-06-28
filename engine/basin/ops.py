@@ -38,8 +38,11 @@ def create_checkpoint(store: Store, project_id: str, branch_id: str, kind: str,
                       raw_event_end_seq: int | None = None,
                       title: str = "", summary_text: str = "",
                       created_by: str = "hook") -> str:
-    # Deterministic id (no clock) so a re-fired hook with the same range dedups (P0-3).
-    cid = new_id("ck", project_id, branch_id, kind, raw_event_end_seq, title, parent_checkpoint_id)
+    # Deterministic id (no clock) so a re-fired hook with the same range dedups (P0-3),
+    # but distinct enough that two real commits never collide (e.g. two saves with the
+    # same message chain off different parents -> different id).
+    cid = new_id("ck", project_id, branch_id, kind, raw_event_start_seq, raw_event_end_seq,
+                 title, summary_text, parent_checkpoint_id)
     existing = {c.get("id") for c in store.read_jsonl(store.checkpoints_path) if c.get("t") == "checkpoint"}
     if cid not in existing:
         rec = {
@@ -91,46 +94,48 @@ def stage_atom(store: Store, project_id: str, branch_id: str, checkpoint_id: str
     atom_id = new_id("at", project_id, semantic_entity_pk)
     f = fp.fingerprints(atom_type, subject_key, statement)
 
-    # branch-local comparison: prev is this branch's current revision, not global latest (P0-2)
-    refs = store.read_atom_refs(branch_id)
-    prev_ref = refs.get(atom_id)
-    prev = store.get_revision(atom_id, prev_ref["current_revision_id"]) if prev_ref else None
-    change = fp.classify_change(prev, f)
-    if change == "NONE":
-        return None  # identical content already current on this branch — idempotent
+    # branch-local read-decide-write, serialized per branch (P0-2 + lost-update safety)
+    with store.lock(f"refs-{branch_id}"):
+        refs = store.read_atom_refs(branch_id)
+        prev_ref = refs.get(atom_id)
+        prev = store.get_revision(atom_id, prev_ref["current_revision_id"]) if prev_ref else None
+        change = fp.classify_change(prev, f)
+        if change == "NONE":
+            return None  # identical content already current on this branch — idempotent
 
-    revision_no = (prev.get("revision_no", 0) + 1) if prev else 1
-    revision_hash = sha256_hex(f"{atom_id}|{statement}|{atom_type}|{authority_tier}|{confidence_score}")
-    revision_id = new_id("rev", revision_hash, revision_no)
-    supersedes_revision_id = prev.get("id") if (prev and change == "STRUCTURAL") else None
-    provenance = {"supersedes": [supersedes_revision_id] if supersedes_revision_id else [], "conflicts_with": []}
+        revision_no = (prev.get("revision_no", 0) + 1) if prev else 1
+        revision_hash = sha256_hex(f"{atom_id}|{statement}|{atom_type}|{authority_tier}|{confidence_score}")
+        # branch in the id so each branch owns its row (correct branch_id attribution)
+        revision_id = new_id("rev", revision_hash, revision_no, branch_id)
+        supersedes_revision_id = prev.get("id") if (prev and change == "STRUCTURAL") else None
+        provenance = {"supersedes": [supersedes_revision_id] if supersedes_revision_id else [], "conflicts_with": []}
 
-    rec = {
-        "t": "atom_revision", "id": revision_id, "atom_id": atom_id, "project_id": project_id,
-        "branch_id": branch_id, "checkpoint_id": checkpoint_id,
-        "semantic_entity_pk": semantic_entity_pk, "revision_no": revision_no,
-        "visibility": "staged", "lifecycle_status": "candidate",
-        "atom_type": atom_type, "statement": statement, "subject_key": subject_key,
-        "confidence_score": confidence_score, "authority_tier": authority_tier,
-        "source_raw_event_id": source_raw_event_id, "source_quote": norm_ws(source_quote)[:280],
-        "provenance": provenance, "change_kind": change,
-        "structural_fp": f["structural_fp"], "semantic_fp": f["semantic_fp"],
-        "cosmetic_fp": f["cosmetic_fp"], "revision_hash": revision_hash,
-        "supersedes_revision_id": supersedes_revision_id,
-        "created_by": created_by, "created_at": now_iso(),
-    }
-    if not store.has_revision(atom_id, revision_id):  # avoid duplicate append across branches
-        store.append_jsonl(store.atom_path(atom_id), rec)
+        rec = {
+            "t": "atom_revision", "id": revision_id, "atom_id": atom_id, "project_id": project_id,
+            "branch_id": branch_id, "checkpoint_id": checkpoint_id,
+            "semantic_entity_pk": semantic_entity_pk, "revision_no": revision_no,
+            "visibility": "staged", "lifecycle_status": "candidate",
+            "atom_type": atom_type, "statement": statement, "subject_key": subject_key,
+            "confidence_score": confidence_score, "authority_tier": authority_tier,
+            "source_raw_event_id": source_raw_event_id, "source_quote": norm_ws(source_quote)[:280],
+            "provenance": provenance, "change_kind": change,
+            "structural_fp": f["structural_fp"], "semantic_fp": f["semantic_fp"],
+            "cosmetic_fp": f["cosmetic_fp"], "revision_hash": revision_hash,
+            "supersedes_revision_id": supersedes_revision_id,
+            "created_by": created_by, "created_at": now_iso(),
+        }
+        if not store.has_revision(atom_id, revision_id):  # avoid duplicate append across branches
+            store.append_jsonl(store.atom_path(atom_id), rec)
 
-    # COSMETIC change to an already-settled atom keeps it settled — never a new "Change" (P1).
-    prev_life = prev_ref.get("lifecycle_status") if prev_ref else None
-    if change == "COSMETIC" and prev_life in ("active", "released"):
-        visibility, lifecycle = prev_ref.get("visibility", "tracked"), prev_life
-    else:
-        visibility, lifecycle = "staged", "candidate"
-    refs[atom_id] = {"current_revision_id": revision_id, "visibility": visibility,
-                     "lifecycle_status": lifecycle, "updated_at": now_iso()}
-    store.write_atom_refs(branch_id, refs)
+        # COSMETIC change to an already-settled atom keeps it settled — never a new "Change" (P1).
+        prev_life = prev_ref.get("lifecycle_status") if prev_ref else None
+        if change == "COSMETIC" and prev_life in ("active", "released"):
+            visibility, lifecycle = prev_ref.get("visibility", "tracked"), prev_life
+        else:
+            visibility, lifecycle = "staged", "candidate"
+        refs[atom_id] = {"current_revision_id": revision_id, "visibility": visibility,
+                         "lifecycle_status": lifecycle, "updated_at": now_iso()}
+        store.write_atom_refs(branch_id, refs)
 
     if supersedes_revision_id:
         record_edge(store, project_id, branch_id, atom_id, atom_id, "supersedes",
@@ -141,16 +146,18 @@ def stage_atom(store: Store, project_id: str, branch_id: str, checkpoint_id: str
 def promote_branch(store: Store, branch_id: str,
                    to_visibility: str = "tracked", to_lifecycle: str = "active") -> int:
     """`basin save`: flip candidate atom_refs to active/tracked (moving-ref update)."""
-    refs = store.read_atom_refs(branch_id)
-    n = 0
-    for atom_id, r in refs.items():
-        if r.get("lifecycle_status") in ("candidate", "staged"):
-            r["visibility"] = to_visibility
-            r["lifecycle_status"] = to_lifecycle
-            r["updated_at"] = now_iso()
-            n += 1
-    store.write_atom_refs(branch_id, refs)
-    return n
+    n = [0]
+
+    def mutate(refs):
+        for _atom_id, r in refs.items():
+            if r.get("lifecycle_status") in ("candidate", "staged"):
+                r["visibility"] = to_visibility
+                r["lifecycle_status"] = to_lifecycle
+                r["updated_at"] = now_iso()
+                n[0] += 1
+
+    store.update_atom_refs(branch_id, mutate)
+    return n[0]
 
 
 def current_atoms(store: Store, branch_id: str, lifecycles: tuple[str, ...] = ("active", "released")) -> list[dict]:
@@ -174,22 +181,26 @@ def current_atoms(store: Store, branch_id: str, lifecycles: tuple[str, ...] = ("
 
 
 def staged_candidates(store: Store, branch_id: str) -> list[dict]:
-    # COSMETIC revisions never surface as Changes (P1).
-    return [a for a in current_atoms(store, branch_id, lifecycles=("candidate", "staged"))
-            if a.get("change_kind") != "COSMETIC"]
+    # Only candidate/staged atoms surface as Changes. A COSMETIC edit to an already
+    # settled atom keeps it active (stage_atom), so it is excluded by lifecycle here —
+    # but a cosmetic re-wording of a still-staged candidate IS a real pending change.
+    return current_atoms(store, branch_id, lifecycles=("candidate", "staged"))
 
 
 def set_atom_lifecycle(store: Store, branch_id: str, atom_id: str,
                        visibility: str, lifecycle: str) -> bool:
     """Single-atom moving-ref update (used by Changes/Proposals actions)."""
-    refs = store.read_atom_refs(branch_id)
-    if atom_id not in refs:
-        return False
-    refs[atom_id]["visibility"] = visibility
-    refs[atom_id]["lifecycle_status"] = lifecycle
-    refs[atom_id]["updated_at"] = now_iso()
-    store.write_atom_refs(branch_id, refs)
-    return True
+    found = [False]
+
+    def mutate(refs):
+        if atom_id in refs:
+            refs[atom_id]["visibility"] = visibility
+            refs[atom_id]["lifecycle_status"] = lifecycle
+            refs[atom_id]["updated_at"] = now_iso()
+            found[0] = True
+
+    store.update_atom_refs(branch_id, mutate)
+    return found[0]
 
 
 def merge_atom(store: Store, from_branch: str, to_branch: str, atom_id: str,
@@ -202,10 +213,13 @@ def merge_atom(store: Store, from_branch: str, to_branch: str, atom_id: str,
     fr = store.read_atom_refs(from_branch)
     if atom_id not in fr:
         return False
-    to = store.read_atom_refs(to_branch)
-    to[atom_id] = {"current_revision_id": fr[atom_id]["current_revision_id"],
-                   "visibility": visibility, "lifecycle_status": lifecycle, "updated_at": now_iso()}
-    store.write_atom_refs(to_branch, to)
+    rev_id = fr[atom_id]["current_revision_id"]
+
+    def mutate(refs):
+        refs[atom_id] = {"current_revision_id": rev_id, "visibility": visibility,
+                         "lifecycle_status": lifecycle, "updated_at": now_iso()}
+
+    store.update_atom_refs(to_branch, mutate)
     return True
 
 
@@ -269,6 +283,32 @@ def diff_branch_vs_canon(store: Store, branch_id: str, canon_branch: str) -> dic
         if aid not in branch:
             removed.append(a)
     return {"new": new, "changed": changed, "removed": removed}
+
+
+def set_do_not_load(store: Store, project_id: str, branch_id: str, atom_id: str,
+                    action: str = "exclude", reason: str = "", created_by: str = "user") -> str:
+    """Append a do_not_load action (exclude | retrieve_only | allow) — the attention budget."""
+    rec = {
+        "t": "do_not_load", "id": new_id("dnl", branch_id, atom_id, action),
+        "project_id": project_id, "branch_id": branch_id, "atom_id": atom_id,
+        "action": action, "policy": "default_exclude", "reason": reason,
+        "created_by": created_by, "created_at": now_iso(),
+    }
+    store.append_jsonl(store.do_not_load_path, rec)
+    return rec["id"]
+
+
+def settle_branch(store: Store, branch_id: str, canon_branch: str) -> dict:
+    """Merge every new/changed atom of a branch into the Canon (the reconcile -> settle step)."""
+    d = diff_branch_vs_canon(store, branch_id, canon_branch)
+    merged = 0
+    for a in d["new"]:
+        if merge_atom(store, branch_id, canon_branch, a["atom_id"]):
+            merged += 1
+    for c in d["changed"]:
+        if merge_atom(store, branch_id, canon_branch, c["branch"]["atom_id"]):
+            merged += 1
+    return {"merged": merged, "new": len(d["new"]), "changed": len(d["changed"])}
 
 
 # ---- edges ---------------------------------------------------------------

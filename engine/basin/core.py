@@ -6,11 +6,19 @@ stdlib only (runs in the hook hot path).
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
+
+try:
+    import fcntl
+    _HAVE_FCNTL = True
+except ImportError:  # non-posix
+    _HAVE_FCNTL = False
 
 VERSION = "0.1.0"
 
@@ -53,6 +61,22 @@ def new_id(prefix: str, *parts) -> str:
     """Content-addressed id: stable for the same logical content (graphify spirit)."""
     digest = sha256_hex("::".join(str(p) for p in parts))[:16]
     return f"{prefix}_{digest}"
+
+
+_UNSAFE_ID = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def safe_id(s) -> str:
+    """Sanitize an externally-influenced id before it becomes a filename.
+
+    Strips path separators and rejects dotfile/traversal names so attacker-controlled
+    hook stdin (session_id, branch names) can never escape `.basin/`.
+    """
+    raw = str(s)
+    cleaned = _UNSAFE_ID.sub("_", raw)
+    if not cleaned or cleaned in (".", "..") or cleaned.startswith("."):
+        return "_" + sha256_hex(raw)[:16]
+    return cleaned[:128]
 
 
 # ---- minimal flat YAML (config only; we never add a yaml dep) -------------
@@ -135,12 +159,12 @@ class Store:
         cfg[key] = value
         self.write_config(cfg)
 
-    # truth (append-only JSONL)
+    # truth (append-only JSONL) — external ids sanitized to stay under .basin/
     def events_path(self, session_id: str) -> Path:
-        return self.dir / "events" / f"{session_id}.jsonl"
+        return self.dir / "events" / f"{safe_id(session_id)}.jsonl"
 
     def atom_path(self, atom_id: str) -> Path:
-        return self.dir / "atoms" / f"{atom_id}.jsonl"
+        return self.dir / "atoms" / f"{safe_id(atom_id)}.jsonl"
 
     @property
     def edges_path(self) -> Path:
@@ -162,16 +186,39 @@ class Store:
     def branches_meta_path(self) -> Path:
         return self.dir / "branches.jsonl"  # append-only branch creation log
 
-    # moving refs (overwritable pointers / projections)
+    # moving refs (overwritable pointers / projections) — branch ids sanitized
     def ref_branch_head(self, branch_id: str) -> Path:
-        return self.dir / "refs" / "branches" / branch_id
+        return self.dir / "refs" / "branches" / safe_id(branch_id)
 
     def ref_atoms(self, branch_id: str) -> Path:
-        return self.dir / "refs" / "atoms" / f"{branch_id}.json"
+        return self.dir / "refs" / "atoms" / f"{safe_id(branch_id)}.json"
 
     @property
     def index_db(self) -> Path:
         return self.dir / ".index" / "basin.db"
+
+    @contextlib.contextmanager
+    def lock(self, name: str):
+        """Advisory file lock (posix flock) serializing concurrent writers (hooks)."""
+        if not _HAVE_FCNTL:
+            yield
+            return
+        lock_path = self.dir / ".index" / "locks" / f"{safe_id(name)}.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        f = open(lock_path, "w")
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+            f.close()
+
+    def update_atom_refs(self, branch_id: str, mutate) -> None:
+        """Locked read-modify-write of a branch's atom_ref pointer (no lost updates)."""
+        with self.lock(f"refs-{branch_id}"):
+            refs = self.read_atom_refs(branch_id)
+            mutate(refs)
+            self.write_atom_refs(branch_id, refs)
 
     # io helpers
     @staticmethod

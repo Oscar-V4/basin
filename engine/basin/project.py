@@ -16,27 +16,39 @@ _GROUPS = [
     ("rejected_path", "Rejected paths"),
     ("preference", "Preferences"),
     ("risk", "Risks"),
+    ("fact", "Facts"),
+    ("assumption", "Assumptions"),
+    ("task", "Tasks"),
+    ("artifact", "Artifacts"),
 ]
+_KNOWN_TYPES = {t for t, _ in _GROUPS}
 
 
 def _render_atoms(atoms: list[dict]) -> str:
     lines = []
-    for _type, title in _GROUPS:
-        items = [a for a in atoms if a.get("atom_type") == _type]
-        if not items:
-            continue
+
+    def render_group(title, items):
         lines.append(f"## {title}")
         for a in items:
             tier = a.get("authority_tier", "")
             conf = round(float(a.get("confidence_score", 0)), 2)
             lines.append(f"- {a['statement']}  _({tier}, {conf})_")
         lines.append("")
+
+    for _type, title in _GROUPS:
+        items = [a for a in atoms if a.get("atom_type") == _type]
+        if items:
+            render_group(title, items)
+    # catch-all so no settled atom is ever silently dropped from the SSOT projection
+    other = [a for a in atoms if a.get("atom_type") not in _KNOWN_TYPES]
+    if other:
+        render_group("Other", other)
     return "\n".join(lines).rstrip() + "\n"
 
 
 def project_branch(store: Store, branch_id: str) -> str:
     meta = {b["branch_id"]: b for b in ops.list_branches(store)}.get(branch_id, {})
-    atoms = ops.current_atoms(store, branch_id, lifecycles=("active", "tracked", "released"))
+    atoms = ops.current_atoms(store, branch_id, lifecycles=("active", "released"))
     head = store.get_branch_head(branch_id) or ""
     fm = [
         "---",

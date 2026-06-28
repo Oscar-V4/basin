@@ -25,6 +25,7 @@ _HINTS = {
     "Changes": "tab: switch · ↑↓: move · a: adopt · d: discard · r: refresh · q: quit",
     "Canon": "tab: switch · r: refresh · q: quit",
     "Proposals": "tab: switch · ↑↓: move · m: merge into canon · r: refresh · q: quit",
+    "Map": "tab: switch · r: refresh · q: quit",
 }
 
 
@@ -98,12 +99,15 @@ def run(stdscr, root: str):
         rows = model.render(tab)
         body_h = h - 4
         # clamp selection + scroll
+        max_scroll = max(0, len(rows) - body_h)
         if tab in _SELECTABLE:
             sel[tab] = max(0, min(sel[tab], len(rows) - 1))
             if sel[tab] < scroll[tab]:
                 scroll[tab] = sel[tab]
             elif sel[tab] >= scroll[tab] + body_h:
                 scroll[tab] = sel[tab] - body_h + 1
+        else:
+            scroll[tab] = max(0, min(scroll[tab], max_scroll))  # scroll-driven (Canon, Map)
         view = rows[scroll[tab]: scroll[tab] + body_h]
         for r, segs in enumerate(view):
             y = 2 + r
@@ -151,9 +155,15 @@ def run(stdscr, root: str):
         elif ch == curses.KEY_BTAB:
             tab_idx = (tab_idx - 1) % len(TABS)
         elif ch in (curses.KEY_DOWN, ord("j")):
-            sel[tab] += 1
+            if tab in _SELECTABLE:
+                sel[tab] += 1
+            else:
+                scroll[tab] += 1  # scroll-driven tabs (Canon, Map)
         elif ch in (curses.KEY_UP, ord("k")):
-            sel[tab] = max(0, sel[tab] - 1)
+            if tab in _SELECTABLE:
+                sel[tab] = max(0, sel[tab] - 1)
+            else:
+                scroll[tab] = max(0, scroll[tab] - 1)
         elif ch == ord("r"):
             model.reload()
         elif ch in (curses.KEY_ENTER, 10, 13) and tab == "Branches":
@@ -163,8 +173,8 @@ def run(stdscr, root: str):
         elif ch == ord("d") and tab == "Changes":
             model.discard(sel[tab])
         elif ch == ord("m") and tab == "Proposals":
-            atoms = getattr(model, "_proposal_atoms", [])
-            if 0 <= sel[tab] < len(atoms):
+            atoms = getattr(model, "_proposal_row_atoms", [])
+            if 0 <= sel[tab] < len(atoms) and atoms[sel[tab]]:
                 from . import ops
                 ops.merge_atom(model.store, model.current_branch, model._canon_id(), atoms[sel[tab]])
                 model.reload()

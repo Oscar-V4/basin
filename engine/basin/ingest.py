@@ -80,22 +80,24 @@ def ingest_transcript(store: Store, project_id: str, session_id: str, branch_id:
                       transcript_path: str | Path) -> dict:
     """Append any new raw_events for this session. Idempotent by event_seq."""
     parsed = parse_transcript(transcript_path)
-    existing = store.read_jsonl(store.events_path(session_id))
-    have = {e.get("event_seq") for e in existing if e.get("t") == "raw_event"}
     new = []
-    for seq, ev in enumerate(parsed):
-        if seq in have:
-            continue
-        rh = raw_hash(ev["event_type"], ev["text"])
-        rec = {
-            "t": "raw_event", "id": new_id("re", session_id, seq), "project_id": project_id,
-            "session_id": session_id, "branch_id": branch_id, "event_seq": seq,
-            "event_type": ev["event_type"], "occurred_at": ev["occurred_at"],
-            "content_text": ev["text"], "token_estimate": max(1, len(ev["text"]) // 4),
-            "raw_hash": rh, "created_at": now_iso(),
-        }
-        store.append_jsonl(store.events_path(session_id), rec)
-        new.append(rec)
+    # serialize concurrent hooks writing the same session's event log
+    with store.lock(f"events-{session_id}"):
+        existing = store.read_jsonl(store.events_path(session_id))
+        have = {e.get("event_seq") for e in existing if e.get("t") == "raw_event"}
+        for seq, ev in enumerate(parsed):
+            if seq in have:
+                continue
+            rh = raw_hash(ev["event_type"], ev["text"])
+            rec = {
+                "t": "raw_event", "id": new_id("re", session_id, seq), "project_id": project_id,
+                "session_id": session_id, "branch_id": branch_id, "event_seq": seq,
+                "event_type": ev["event_type"], "occurred_at": ev["occurred_at"],
+                "content_text": ev["text"], "token_estimate": max(1, len(ev["text"]) // 4),
+                "raw_hash": rh, "created_at": now_iso(),
+            }
+            store.append_jsonl(store.events_path(session_id), rec)
+            new.append(rec)
     return {"parsed": len(parsed), "new": len(new), "events": new}
 
 

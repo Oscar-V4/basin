@@ -65,7 +65,7 @@ CREATE VIEW v_staged_candidates AS
   SELECT r.branch_id, r.atom_id, rev.atom_type, rev.statement, rev.change_kind,
          rev.authority_tier, rev.confidence_score
   FROM atom_ref r JOIN atom_revision rev ON rev.id = r.current_revision_id
-  WHERE r.lifecycle_status IN ('candidate','staged') AND rev.change_kind != 'COSMETIC';
+  WHERE r.lifecycle_status IN ('candidate','staged');
 
 CREATE VIEW v_effective_do_not_load AS
   SELECT branch_id, atom_id, action, reason FROM do_not_load WHERE action = 'exclude';

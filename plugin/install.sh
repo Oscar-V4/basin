@@ -63,13 +63,19 @@ echo "  commands linked"
 # 4. merge hook registration into settings.json (deep-merge, idempotent)
 if [ "$DRY" -eq 0 ]; then
   python3 - "$REPO_DIR/settings.partial.json" "$CLAUDE_DIR/settings.json" <<'PY'
-import json, sys, os
+import json, sys, os, shutil
 partial_p, settings_p = sys.argv[1], sys.argv[2]
 partial = json.load(open(partial_p, encoding="utf-8"))
 settings = {}
-if os.path.exists(settings_p):
-    try: settings = json.load(open(settings_p, encoding="utf-8"))
-    except Exception: settings = {}
+if os.path.exists(settings_p) and os.path.getsize(settings_p) > 0:
+    try:
+        settings = json.load(open(settings_p, encoding="utf-8"))
+    except Exception as e:
+        # never silently wipe a present-but-unparseable settings.json
+        print(f"  ! existing settings.json is not valid JSON ({e}); refusing to overwrite.", file=sys.stderr)
+        print("    Fix or move it, then re-run install.sh.", file=sys.stderr)
+        sys.exit(1)
+    shutil.copy2(settings_p, settings_p + ".basin.bak")  # backup before edit
 hooks = settings.setdefault("hooks", {})
 def cmd_of(h): return h.get("hooks", [{}])[0].get("command")
 for event, entries in partial.get("hooks", {}).items():
@@ -78,7 +84,10 @@ for event, entries in partial.get("hooks", {}).items():
     for e in entries:
         if cmd_of(e) not in have:
             cur.append(e)
-json.dump(settings, open(settings_p, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+tmp = settings_p + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(settings, f, indent=2, ensure_ascii=False)
+os.replace(tmp, settings_p)  # atomic
 print("  settings.json merged:", settings_p)
 PY
 fi
