@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sys
 
-from .core import Store
+from .core import Store, safe_id, sha256_hex
 from . import ingest, ops, extract_det, reindex, project, fork
 
 
@@ -54,24 +54,37 @@ def _run_with_hook(mode: str, hook: dict, provider: str) -> int:
     transcript = hook.get("transcript_path", "")
 
     if mode == "session_start":
-        if transcript:
-            ingest.ingest_transcript(store, project_id, session_id, branch_id, transcript)
         base = store.get_branch_head(branch_id)
         parent_sl = None
-        # auto fork detection (opt-in; explicit `basin fork` is the reliable path)
-        if cfg.get("auto_fork", False) and transcript:
-            det = fork.detect_fork(store, project_id, session_id,
-                                   min_prefix=int(cfg.get("min_fork_prefix", 3)))
+        parent_external_session_id = None
+        det = None
+        if cfg.get("auto_fork", True) and transcript:
+            hashes = fork.transcript_hashes(transcript)
+            det = fork.detect_fork_from_hashes(
+                store, session_id, hashes, min_prefix=int(cfg.get("min_fork_prefix", 3))
+            )
             if det:
-                parent_branch = ops.current_branch_for_session(store, det["parent_session"], branch_id)
+                parent_external_session_id = det["parent_session"]
+                parent_branch = ops.current_branch_for_session(store, parent_external_session_id, branch_id)
+                parent_sl = ops.latest_session_link_id(store, parent_external_session_id)
                 base = store.get_branch_head(parent_branch)
-                branch_id = fork.create_branch(store, project_id, f"fork-{session_id[:6]}",
-                                               intent="auto-detected fork", base_checkpoint_id=base,
-                                               from_branch=parent_branch)
+                auto_branch_name = f"fork-{safe_id(session_id)[:10]}-{sha256_hex(str(session_id))[:6]}"
+                branch_id = fork.create_branch(
+                    store, project_id, auto_branch_name,
+                    intent=f"auto-detected {det.get('relation', 'fork')} from {parent_external_session_id}",
+                    base_checkpoint_id=base, from_branch=parent_branch,
+                    parent_session_link_id=parent_sl,
+                )
+        if transcript:
+            ingest.ingest_transcript(store, project_id, session_id, branch_id, transcript)
         ops.register_session(store, project_id, session_id, branch_id,
                              transcript_path=transcript, cwd=root, status="active",
                              base_checkpoint_id=base, parent_session_link_id=parent_sl,
-                             provider=provider)
+                             parent_external_session_id=parent_external_session_id,
+                             provider=provider,
+                             fork_lcp=det.get("lcp") if det else None,
+                             fork_relation=det.get("relation", "") if det else "",
+                             fork_confidence=det.get("confidence") if det else None)
         return 0
 
     branch_id = ops.current_branch_for_session(store, session_id, branch_id)

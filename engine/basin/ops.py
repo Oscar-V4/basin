@@ -15,13 +15,16 @@ from . import fingerprint as fp
 
 # ---- branches ------------------------------------------------------------
 def ensure_branch(store: Store, branch_id: str, name: str, intent: str = "",
-                  base_checkpoint_id: str | None = None, owner: str = "") -> dict:
+                  base_checkpoint_id: str | None = None, owner: str = "",
+                  parent_branch_id: str | None = None,
+                  parent_session_link_id: str | None = None) -> dict:
     existing = {b["branch_id"]: b for b in store.read_jsonl(store.branches_meta_path) if b.get("t") == "branch"}
     if branch_id in existing:
         return existing[branch_id]
     rec = {
         "t": "branch", "branch_id": branch_id, "name": name, "intent": intent,
         "base_checkpoint_id": base_checkpoint_id, "owner": owner,
+        "parent_branch_id": parent_branch_id, "parent_session_link_id": parent_session_link_id,
         "status": "active", "merge_policy": "human_required",
         "created_at": now_iso(),
     }
@@ -63,16 +66,22 @@ def create_checkpoint(store: Store, project_id: str, branch_id: str, kind: str,
 def register_session(store: Store, project_id: str, external_session_id: str, branch_id: str,
                      transcript_path: str = "", cwd: str = "",
                      parent_session_link_id: str | None = None,
+                     parent_external_session_id: str | None = None,
                      base_checkpoint_id: str | None = None,
                      base_context_pack_id: str | None = None,
                      status: str = "active",
-                     provider: str = "claude_code") -> str:
+                     provider: str = "claude_code",
+                     fork_lcp: int | None = None,
+                     fork_relation: str = "",
+                     fork_confidence: float | None = None) -> str:
     sl = new_id("sl", project_id, external_session_id, branch_id)
     rec = {
         "t": "session_link", "id": sl, "project_id": project_id, "provider": provider,
         "external_session_id": external_session_id, "branch_id": branch_id,
         "base_checkpoint_id": base_checkpoint_id, "base_context_pack_id": base_context_pack_id,
         "parent_session_link_id": parent_session_link_id,
+        "parent_external_session_id": parent_external_session_id,
+        "fork_lcp": fork_lcp, "fork_relation": fork_relation, "fork_confidence": fork_confidence,
         "transcript_path": transcript_path, "cwd": cwd, "status": status,
         "started_at": now_iso(), "last_seen_at": now_iso(),
     }
@@ -294,6 +303,19 @@ def list_sessions(store: Store) -> list[dict]:
         if s.get("t") == "session_link":
             by_id[s["id"]] = s
     return list(by_id.values())
+
+
+def latest_session_link(store: Store, external_session_id: str) -> dict | None:
+    latest = None
+    for s in store.read_jsonl(store.sessions_path):
+        if s.get("t") == "session_link" and s.get("external_session_id") == external_session_id:
+            latest = s
+    return latest
+
+
+def latest_session_link_id(store: Store, external_session_id: str) -> str | None:
+    latest = latest_session_link(store, external_session_id)
+    return latest.get("id") if latest else None
 
 
 def end_session(store: Store, project_id: str, external_session_id: str, branch_id: str,

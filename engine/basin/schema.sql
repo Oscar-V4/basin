@@ -5,7 +5,8 @@ PRAGMA synchronous = NORMAL;
 
 CREATE TABLE branch (
   branch_id TEXT PRIMARY KEY, name TEXT, intent TEXT, status TEXT,
-  base_checkpoint_id TEXT, merge_policy TEXT, head_checkpoint_id TEXT, created_at TEXT
+  base_checkpoint_id TEXT, parent_branch_id TEXT, parent_session_link_id TEXT,
+  merge_policy TEXT, head_checkpoint_id TEXT, created_at TEXT
 );
 
 CREATE TABLE raw_event (
@@ -46,7 +47,9 @@ CREATE TABLE edge (
 CREATE TABLE session_link (
   id TEXT PRIMARY KEY, project_id TEXT, provider TEXT, external_session_id TEXT,
   branch_id TEXT, base_checkpoint_id TEXT, base_context_pack_id TEXT,
-  parent_session_link_id TEXT, transcript_path TEXT, cwd TEXT, status TEXT,
+  parent_session_link_id TEXT, parent_external_session_id TEXT,
+  fork_lcp INTEGER, fork_relation TEXT, fork_confidence REAL,
+  transcript_path TEXT, cwd TEXT, status TEXT,
   started_at TEXT, last_seen_at TEXT
 );
 

@@ -20,7 +20,7 @@ try:
 except ImportError:  # non-posix
     _HAVE_FCNTL = False
 
-VERSION = "0.1.0"
+VERSION = "0.1.2-alpha"
 
 # ---- enums / vocab (mirrors BLUEPRINT 4.1) -------------------------------
 ATOM_TYPES = (
@@ -119,7 +119,7 @@ DEFAULT_CONFIG = {
     "retrieve_on_demand_max_tokens": 20000,
     "min_fork_prefix": 3,
     "enabled": True,
-    "auto_fork": False,
+    "auto_fork": True,
 }
 
 _CONFIG_KEYS = (

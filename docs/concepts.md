@@ -28,7 +28,7 @@ The settled source of truth for a project, projected to a human-readable `canon/
 
 A branch is a workroom for exploring an approach. A **fork** inherits the Canon's atoms at the fork point, then diverges — the hero use case: you fork a thread to try something different, and Basin keeps both lines of reasoning distinct.
 
-Fork detection (opt-in) finds the parent by the **longest common prefix** of the two sessions' event hashes — the same idea as Git's merge-base, reconstructed from the transcript. The reliable path today is the explicit `basin fork`.
+Fork detection is on by default for new projects. Basin finds the parent by the **longest common prefix** of the two sessions' event hashes — the same idea as Git's merge-base, reconstructed from the transcript. If the host opens a side chat by preserving the inherited transcript prefix, Basin records the side chat as a child branch and stores the parent session link, prefix length, relation (`prefix` or `diverged`), and confidence on the `session_link`. The explicit `basin fork` command remains useful when a host does not preserve enough shared transcript to infer the relationship.
 
 ## Checkpoint
 
@@ -36,7 +36,7 @@ A commit — a captured context transition, not the raw transcript itself. Kinds
 
 ## Host integrations
 
-Claude Code uses `SessionStart`, `PreCompact`, and `SessionEnd` hooks, plus slash commands for common Basin actions. Codex uses the same engine through `basin codex-hook`, mapping Codex rollout transcripts into the same raw-event format; `Stop` is treated as a `turn_end` capture rather than a final session close. A project can use either host, or both, without changing the `.basin/` data model.
+Claude Code uses `SessionStart`, `PreCompact`, and `SessionEnd` hooks, plus slash commands for common Basin actions. Codex uses the same engine through `basin codex-hook`, mapping Codex rollout transcripts into the same raw-event format; `Stop` is treated as a `turn_end` capture rather than a final session close. At session start, Basin decides the branch before ingesting raw events, so automatically detected forks are attributed to their own branch from the first recorded event. A project can use either host, or both, without changing the `.basin/` data model.
 
 ## Context Pack
 

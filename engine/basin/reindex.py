@@ -44,6 +44,7 @@ def reindex(store: Store) -> dict:
     for b in branches:
         b["head_checkpoint_id"] = store.get_branch_head(b["branch_id"])
     insert("branch", ["branch_id", "name", "intent", "status", "base_checkpoint_id",
+                      "parent_branch_id", "parent_session_link_id",
                       "merge_policy", "head_checkpoint_id", "created_at"], branches)
 
     # raw_events (all sessions)
@@ -92,6 +93,7 @@ def reindex(store: Store) -> dict:
 
     insert("session_link", ["id", "project_id", "provider", "external_session_id", "branch_id",
                             "base_checkpoint_id", "base_context_pack_id", "parent_session_link_id",
+                            "parent_external_session_id", "fork_lcp", "fork_relation", "fork_confidence",
                             "transcript_path", "cwd", "status", "started_at", "last_seen_at"],
            [s for s in store.read_jsonl(store.sessions_path) if s.get("t") == "session_link"])
 
