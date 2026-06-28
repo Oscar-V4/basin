@@ -8,7 +8,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-black?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/dependencies-stdlib%20only-black" alt="stdlib only">
-  <img src="https://img.shields.io/badge/tests-200%20passing-brightgreen" alt="200 tests passing">
+  <img src="https://img.shields.io/badge/tests-221%20passing-brightgreen" alt="221 tests passing">
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="alpha">
   <img src="https://img.shields.io/badge/built%20for-Claude%20Code%20%2B%20Codex-black" alt="built for Claude Code and Codex">
 </p>
@@ -23,9 +23,10 @@ Turn it on once per host and Basin quietly does the context engineering for you:
 - 🕹️ **Inspect the context graph.** `basin tui` shows branch lanes, checkpoint diffstats, atom badges, proposals, and detail panels without leaving the terminal.
 - 🧠 **Compile Context Packs.** A budgeted, inheritable artifact a new thread loads to continue where the last left off — with a built-in continuity test.
 - 🪂 **Capture at the right moments.** Claude Code uses session/pre-compact/session-end hooks; Codex uses session/pre-compact/turn-end capture. Repeated hooks with no new transcript content are no-ops.
+- 🌿 **Recognize forks automatically.** When a host preserves the inherited transcript prefix, Basin links side threads/forks to their parent session and records new raw events on the detected branch from the start.
 - 📁 **Files are the source of truth.** Append-only JSONL + human-readable Markdown in `.basin/`; SQLite is a rebuildable index you can delete anytime.
 
-> **Status: alpha, under active development.** The engine, the Claude Code/Codex capture integrations, and the terminal UI work today and are covered by 200 passing tests. The detached LLM refiner and automatic fork detection are opt-in. See [Status](#status).
+> **Status: alpha, under active development.** The engine, the Claude Code/Codex capture integrations, automatic fork detection, and the terminal UI work today and are covered by 221 passing tests. The detached LLM refiner remains opt-in. See [Status](#status).
 
 ---
 
@@ -76,7 +77,7 @@ cd basin
 ./plugin/install-codex.sh    # Codex: hooks, merges ~/.codex/hooks.json
 
 cd /your/project
-basin setup                  # scaffold .basin/ in your project
+basin setup                  # scaffold .basin/ in your project (auto-fork on by default)
 basin graph                  # optional: build clusters for the Map tab
 basin tui                    # open the cockpit
 ```
@@ -87,11 +88,12 @@ Run the installer for the host you use, or run both if you move between Claude C
 basin status                 # current Canon + staged changes + open questions
 basin save -m "lock storage decision"   # settle staged atoms into the Canon
 basin fork --name spike      # explore a new approach on a branch
+basin auto                   # enable always-on capture + automatic fork detection for an existing project
 basin reconcile --branch spike           # preview what settling that branch would change
 basin settle --branch spike              # apply the branch's clean changes to Canon
 basin pack --lod standard    # compile a Context Pack to hand off to a new thread
 basin inherit --branch main  # load the pack into a new thread + take the continuity test
-basin on | off               # toggle the always-on engine for this project
+basin on | off               # toggle capture for this project
 ```
 
 Use `basin settle --force --branch spike` only when you intentionally want to override divergence or a rejected-path resurrection. In Claude Code, the same common actions are slash commands: `/basin-save`, `/basin-pack`, `/basin-fork`, `/basin-status`, `/basin-inherit`; branch reconcile/settle stays on the CLI. In Codex, use the `basin` CLI for the same actions; capture still runs automatically through hooks.
@@ -119,8 +121,8 @@ More in [docs/concepts.md](docs/concepts.md) and [docs/comparison-to-git.md](doc
 | `basin tui` — cockpit with rail graph, checkpoint diffstats, branch chips, atom badges, aligned meta, Map tab, and detail panels | ✅ working |
 | Context graph clustering (stable community ids) | ✅ working |
 | Detached LLM refiner (`basin worker`) | 🧪 opt-in — `BASIN_LLM=codex` (gpt-5.5) or `=1` (legacy `claude -p`, now API-only) |
-| Automatic fork detection | 🧪 opt-in (`auto_fork`); explicit `basin fork` is the reliable path |
-| **Tests** | ✅ **200 passing** (`engine/tests/`) |
+| Automatic fork detection | ✅ default-on (`auto_fork`); stores parent session links, LCP metadata, and prefix-only side-chat detection when transcripts preserve the inherited prefix |
+| **Tests** | ✅ **221 passing** (`engine/tests/`) |
 
 This is research-grade software under active development. Interfaces will change.
 

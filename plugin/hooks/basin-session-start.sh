@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
 # Basin SessionStart hook — register the session and ingest its transcript prefix.
+BASIN_ENV="${BASIN_CLAUDE_ENV:-$HOME/.claude/hooks/basin-env.sh}"
+[ -f "$BASIN_ENV" ] && . "$BASIN_ENV"
 python3 -m basin hook --mode session_start >/dev/null 2>&1 || true
 exit 0

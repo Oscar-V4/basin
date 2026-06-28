@@ -6,6 +6,8 @@ data formats may still change.
 
 ## [Unreleased]
 
+No unreleased changes.
+
 ## [0.1.3-alpha] — 2026-06-29
 
 ### Added — TUI cockpit polish
@@ -28,6 +30,43 @@ data formats may still change.
   product description matches the current Claude Code + Codex capture model and the
   context-history cockpit direction.
 - Bumped engine, CLI, installer, and plugin release metadata for `0.1.3-alpha`.
+
+### Verification
+- Full suite: **221 passing** checks across `engine/tests/`.
+
+## [0.1.2-alpha] — 2026-06-29
+
+### Added — automatic session/fork recognition
+- `auto_fork` is now on by default for new projects. `basin setup --manual-fork`
+  leaves it off, and `basin auto` enables always-on capture plus automatic fork
+  detection for an existing project.
+- Session-start hooks now decide the branch before ingesting raw events. When a
+  host preserves the inherited transcript prefix, Basin creates a child branch and
+  records the side thread/fork on that branch from its first raw event.
+- Automatic fork metadata is now persisted: parent session link, parent external
+  session id, longest-common-prefix length, relation (`prefix` or `diverged`),
+  confidence, and parent branch metadata are stored in `.basin/` and indexed in
+  SQLite.
+- Prefix-only side chats are recognized with lower confidence, so a newly opened
+  side thread can be linked before its first unique turn.
+
+### Fixed
+- Auto-fork no longer ingests the candidate transcript onto `main` before branch
+  selection, which previously made detected fork events look like canon-line raw
+  events.
+- Repeated `SessionStart` hooks no longer reset an already-created auto branch's
+  local atom refs back to the parent branch.
+- Auto-detected branch names now include a stable session-id hash suffix to avoid
+  merging unrelated sessions that share the same visible prefix.
+- Installed hook wrappers source a generated `basin-env.sh` fallback, so capture
+  still works on PEP 668 / externally-managed Python systems where editable pip
+  install is blocked.
+
+### Verification
+- Added `test_auto.py` covering default automatic mode, diverged and prefix-only
+  detection, parent session links, branch parent metadata, branch-correct raw event
+  attribution, and index round-trip queries.
+- Full suite: **193 passing** checks across `engine/tests/`.
 
 ## [0.1.1-alpha] — 2026-06-29
 

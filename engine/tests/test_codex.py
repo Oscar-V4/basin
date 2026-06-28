@@ -165,6 +165,7 @@ def test_codex_installer_tolerates_empty_hook_entries(tmp):
     res = subprocess.run(["bash", os.path.join(repo, "plugin", "install-codex.sh"), "--no-pip", "--copy"],
                          env=env, capture_output=True, text=True, timeout=20)
     merged = json.load(open(hooks_path, encoding="utf-8"))
+    env_path = os.path.join(codex_dir, "hooks", "basin-env.sh")
     stop_entries = merged.get("hooks", {}).get("Stop", [])
     turn_end_count = sum(
         hook.get("command") == "~/.codex/hooks/basin-codex-turn-end.sh"
@@ -174,6 +175,9 @@ def test_codex_installer_tolerates_empty_hook_entries(tmp):
     check("codex installer: empty existing hook entry does not crash",
           res.returncode == 0 and turn_end_count == 1,
           res.stderr or str(merged))
+    check("codex installer: writes PYTHONPATH hook env fallback",
+          os.path.exists(env_path) and ENGINE in open(env_path, encoding="utf-8").read(),
+          env_path)
 
 
 def test_claude_installer_tolerates_empty_hook_entries(tmp):
@@ -195,6 +199,7 @@ def test_claude_installer_tolerates_empty_hook_entries(tmp):
     res = subprocess.run(["bash", os.path.join(repo, "plugin", "install.sh"), "--no-pip", "--copy"],
                          env=env, capture_output=True, text=True, timeout=20)
     merged = json.load(open(settings_path, encoding="utf-8"))
+    env_path = os.path.join(claude_dir, "hooks", "basin-env.sh")
     session_entries = merged.get("hooks", {}).get("SessionStart", [])
     session_start_count = sum(
         hook.get("command") == "~/.claude/hooks/basin-session-start.sh"
@@ -204,6 +209,9 @@ def test_claude_installer_tolerates_empty_hook_entries(tmp):
     check("claude installer: empty existing hook entry does not crash",
           res.returncode == 0 and session_start_count == 1,
           res.stderr or str(merged))
+    check("claude installer: writes PYTHONPATH hook env fallback",
+          os.path.exists(env_path) and ENGINE in open(env_path, encoding="utf-8").read(),
+          env_path)
 
 
 def main():

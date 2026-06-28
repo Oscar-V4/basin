@@ -22,7 +22,10 @@ def cmd_setup(args):
         cfg["project_id"] = new_id("p", str(store.root))
     if args.name:
         cfg["project_name"] = args.name
+    cfg["auto_fork"] = not args.manual_fork
     store.scaffold(cfg)
+    if args.manual_fork:
+        store.set_config("auto_fork", False)
     ops.ensure_branch(store, store.config().get("canon_branch", "main"), name="main", intent="canon line")
     counts = reindex.reindex(store)
     print(f"setup: {store.dir} (project_id={store.config()['project_id']}) "
@@ -144,6 +147,20 @@ def cmd_toggle(args):
     print(f"basin {'on' if args.on else 'off'}: engine {'enabled' if args.on else 'disabled'} for {store.root}")
 
 
+def cmd_auto(args):
+    store = _store(args)
+    if not store.dir.exists():
+        print(f"auto: {store.dir} not found; run `basin setup` first")
+        return 1
+    store.set_config("enabled", True)
+    if args.fork == "on":
+        store.set_config("auto_fork", True)
+    elif args.fork == "off":
+        store.set_config("auto_fork", False)
+    cfg = store.config()
+    print(f"auto: enabled={cfg.get('enabled', True)} auto_fork={cfg.get('auto_fork', True)} root={store.root}")
+
+
 def cmd_graph(args):
     from . import graph
     store = _store(args)
@@ -255,7 +272,7 @@ def build_parser():
     p.add_argument("--version", action="version", version=f"basin {VERSION}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("setup"); s.add_argument("--project-id", dest="project_id"); s.add_argument("--name"); s.set_defaults(func=cmd_setup)
+    s = sub.add_parser("setup"); s.add_argument("--project-id", dest="project_id"); s.add_argument("--name"); s.add_argument("--manual-fork", action="store_true", help="leave automatic fork detection off"); s.set_defaults(func=cmd_setup)
     s = sub.add_parser("ingest"); s.add_argument("--session", required=True); s.add_argument("--transcript", required=True); s.add_argument("--branch"); s.set_defaults(func=cmd_ingest)
     s = sub.add_parser("extract"); s.add_argument("--session", required=True); s.add_argument("--branch"); s.set_defaults(func=cmd_extract)
     s = sub.add_parser("save"); s.add_argument("--branch"); s.add_argument("-m", "--message", default=""); s.set_defaults(func=cmd_save)
@@ -275,6 +292,7 @@ def build_parser():
     s = sub.add_parser("tui"); s.add_argument("--selftest", action="store_true"); s.set_defaults(func=cmd_tui)
     s = sub.add_parser("on"); s.set_defaults(func=cmd_toggle, on=True)
     s = sub.add_parser("off"); s.set_defaults(func=cmd_toggle, on=False)
+    s = sub.add_parser("auto"); s.add_argument("--fork", default="on", choices=["on", "off", "keep"], help="set automatic fork detection (default: on)"); s.set_defaults(func=cmd_auto)
     s = sub.add_parser("hook"); s.add_argument("--mode", default="session_end"); s.set_defaults(func=cmd_hook)
     s = sub.add_parser("codex-hook"); s.add_argument("--mode", default="auto"); s.set_defaults(func=cmd_codex_hook)
     return p
