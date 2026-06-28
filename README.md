@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="Basin" height="76">
+  <img src="assets/logo.png" alt="Basin" height="76">
 </p>
 
 <h3 align="center">Version control for the context of AI collaboration</h3>
