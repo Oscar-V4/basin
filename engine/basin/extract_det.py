@@ -39,27 +39,53 @@ _STOP = {"the", "a", "an", "to", "of", "for", "and", "or", "is", "are", "be", "w
 # (recall) but never stage atoms from them.
 _PROSE_EVENTS = {"user", "assistant", "system"}
 
-# Reject a sentence that is clearly file-dump / code / markup rather than prose. The
-# dominant dogfood noise was cat -n output folded into a user turn ("10 - Registers…",
-# "105 you only need…") plus markdown/table/JSON fragments and bare file paths.
-_FILE_DUMP = re.compile(
-    r"^\s*\d+\s*[|:)\].]?\s+\S"          # leading line-number (cat -n / numbered list of file content)
-    r"|^\s*[`#>|]"                        # md heading / quote / fenced code / table row
-    r"|^\s*[-*+]\s"                       # md bullet
-    r"|^\s*[\[{\"]"                       # json / array / quoted-key fragment
+# A leading list / quote / tag marker is NOT evidence of a file dump — the user writes real
+# decisions as markdown bullets, numbered items, and quoted lines. Strip ONE such marker
+# before judging (else we drop the user's own high-authority decisions — review finding r3).
+_LEAD_MARKER = re.compile(r"^\s*(?:[-*+•]|\d+[.)\]:])\s+")     # bullet or "1." / "2)" list marker
+_LEAD_TAG = re.compile(r"^\s*\[[a-z_]+\]\s+")                  # "[decision] ", "[constraint] "
+_QUOTES = "\"'`“”‘’«»"
+
+# Structural lines that genuinely are file / markup, not prose (checked AFTER marker-strip).
+_STRUCT = re.compile(
+    r"^\s*[`#>|]"        # md heading / quote / fenced code / table row
+    r"|^\s*[\[{]"        # json / array fragment
+    r"|^\s*\d+\s+\S"     # cat -n line-number dump: "105 you only need…", "10 - Registers…"
 )
-_PATHY = re.compile(r"https?://|/Users/|~/\.|\b[\w./-]+\.(?:md|py|ts|tsx|json|sql|sh|ya?ml)\b")
+# A path/filename CITATION inside prose is fine ("CLAUDE.md never names a client domain.") —
+# discount the path token, then judge what remains; only reject when the line is mostly path.
+# Extension branch is non-backtracking (no '.' in the run + lookahead anchor) to avoid ReDoS.
+_PATH_TOKEN = re.compile(
+    r"https?://\S+"
+    r"|(?<![\w.])~?/[\w./-]+"
+    r"|\b[\w/-]+\.(?:md|py|ts|tsx|json|sql|sh|ya?ml)(?![\w.])"
+)
+_HANGUL = re.compile(r"[가-힣]")
+
+
+def _strip_markers(sent: str) -> str:
+    s = _LEAD_TAG.sub("", sent.strip(), count=1)
+    s = _LEAD_MARKER.sub("", s, count=1)
+    return s.strip().strip(_QUOTES).strip()
 
 
 def _is_prose(sent: str) -> bool:
-    """True if the sentence looks like natural language, not a file/code fragment."""
-    if _FILE_DUMP.search(sent) or _PATHY.search(sent):
+    """True if the sentence reads as natural language rather than a file/code fragment.
+
+    A bulleted, numbered, tagged, or quoted statement still counts (markers stripped first),
+    and a sentence that merely cites a filename/path still counts (the path is discounted, not
+    fatal). Only a line that is structurally a dump, or mostly path/symbols, is rejected.
+    """
+    s = _strip_markers(sent)
+    if not s or _STRUCT.search(s):
         return False
-    letters = sum(c.isalpha() for c in sent)
-    if letters < len(sent) * 0.5:          # mostly symbols/punctuation -> code, not prose
+    core = _PATH_TOKEN.sub(" ", s)                 # discount path/filename citations
+    letters = sum(c.isalpha() for c in core)
+    if letters < max(1, len(core)) * 0.45:         # what's left is mostly path/symbols -> not prose
         return False
-    words = re.findall(r"[A-Za-z가-힣]{2,}", sent)
-    return len(words) >= 4                  # need a few real words to be a statement
+    words = re.findall(r"[A-Za-z]{2,}|[가-힣]{2,}", core)
+    min_words = 2 if _HANGUL.search(core) else 4   # Korean decisions are terser than English
+    return len(words) >= min_words
 
 
 def _subject_key(statement: str) -> str:

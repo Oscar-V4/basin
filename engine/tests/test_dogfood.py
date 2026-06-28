@@ -51,7 +51,7 @@ def main():
         {"id": "e5", "event_type": "user",
          "content_text": "10 - Registers JSON Schema-based entity tables; we must validate FKs."},  # cat -n dump -> skip
         {"id": "e6", "event_type": "user",
-         "content_text": "see /Users/x/refs/lix/docs/schemas.md — we must keep it additive."},      # pathy -> skip
+         "content_text": "We must keep CLAUDE.md additive-only going forward."},  # prose + citation -> KEEP (r3)
     ]
     res = extract_det.extract_events(store, pid, "main", None, events)
     stmts = [a["statement"] for a in res["atoms"]]
@@ -60,13 +60,18 @@ def main():
     check("precision: prompt-echo dup not double-staged",
           sum("SQLite" in s for s in stmts) == 1, f"n={sum('SQLite' in s for s in stmts)}")
     check("precision: cat -n file-dump line rejected", not any("Registers JSON Schema" in s for s in stmts))
-    check("precision: pathy line rejected", not any("schemas.md" in s for s in stmts))
+    check("precision: prose that cites a filename is kept (r3 recall fix)",
+          any("additive-only" in s for s in stmts), str(stmts))
 
-    # ---- _is_prose unit checks ----
+    # ---- _is_prose unit checks (r3: markers/citations must not be fatal) ----
     check("is_prose: accepts a sentence", extract_det._is_prose("We will ship as a plugin and skip the GUI."))
+    check("is_prose: accepts a bulleted decision (r3)", extract_det._is_prose('- "We decided to ship as a plugin."'))
+    check("is_prose: accepts prose citing a filename (r3)",
+          extract_det._is_prose("CLAUDE.md never names a client domain."))
+    check("is_prose: accepts a short Korean decision (r3)", extract_det._is_prose("별도 GUI 앱은 폐기하자."))
     check("is_prose: rejects line-number dump", not extract_det._is_prose("105 you only need a small subset"))
     check("is_prose: rejects markdown table row", not extract_det._is_prose("| col | value | note |"))
-    check("is_prose: rejects bullet fragment", not extract_det._is_prose("- doc in DONE/ is read-only"))
+    check("is_prose: rejects a bare path line", not extract_det._is_prose("src/deeplake-api.ts"))
 
     # ---- ranking: a flood of constraints must not starve decisions in the pack ----
     store2, pid2, _ = fresh()
@@ -98,6 +103,42 @@ def main():
     kept = [d["statement"] for d in pack3["current_decisions"]]
     check("ranking: user_explicit beats model_inferred under tight budget",
           any("User confirmed" in s for s in kept) and not any("Low authority" in s for s in kept), str(kept))
+
+    # ---- ranking: per-type FLOOR keeps rejected_paths/open_questions from full eviction (r3) ----
+    # The first ranking fix used a global type-priority sort, which merely converted the
+    # constraint-flood into a rejected_path/open_question-flood — a cold reader saw zero of them.
+    store4, pid4, _ = fresh()
+    store4.set_config("lod_standard_tokens", 120)   # decisions alone would consume the whole budget
+    for i in range(40):
+        ops.stage_atom(store4, pid4, "main", None, "decision",
+                       f"We decided detail {i} about the engine design here.", f"d{i}", "user_explicit")
+    ops.stage_atom(store4, pid4, "main", None, "rejected_path", "No vector DB; files are truth.", "no-vec", "user_explicit")
+    ops.stage_atom(store4, pid4, "main", None, "open_question", "Fork auto-detect reliability is unresolved.", "fork-detect", "user_explicit")
+    ops.promote_branch(store4, "main")
+    _, _, pack4 = compile_context_pack(store4, pid4, "main", lod="standard")
+    check("ranking: floor keeps a rejected_path in always-load", len(pack4["rejected_paths"]) >= 1,
+          f"rp={len(pack4['rejected_paths'])}")
+    check("ranking: floor keeps an open_question in always-load", len(pack4["open_questions"]) >= 1,
+          f"oq={len(pack4['open_questions'])}")
+    check("ranking: decisions still fill the rest", len(pack4["current_decisions"]) >= 3,
+          f"dec={len(pack4['current_decisions'])}")
+
+    # ---- ranking: canonical authority order (artifact_declared outranks assistant_proposed) ----
+    from basin.compile_pack import _rank_key  # noqa: E402
+    art = _rank_key({"authority_tier": "artifact_declared", "confidence_score": 0.5})
+    asst = _rank_key({"authority_tier": "assistant_proposed", "confidence_score": 0.5})
+    check("ranking: artifact_declared outranks assistant_proposed (canonical)", art < asst, f"{art} vs {asst}")
+
+    # ---- ranking: malformed confidence_score does not crash the pack ----
+    store5, pid5, _ = fresh()
+    a5 = ops.stage_atom(store5, pid5, "main", None, "decision", "Robust to bad data.", "robust", "user_explicit")[0]
+    ops.promote_branch(store5, "main")
+    try:
+        _rank_key({"authority_tier": "user_explicit", "confidence_score": "high", "revision_no": None})
+        crashed = False
+    except Exception:
+        crashed = True
+    check("ranking: non-numeric confidence_score does not raise", not crashed)
 
     print("\n" + ("ALL PASS" if not _fails else f"FAILED: {_fails}"))
     return 1 if _fails else 0

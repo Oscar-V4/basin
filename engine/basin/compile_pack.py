@@ -5,27 +5,39 @@ spills the rest to a retrieval_manifest, applies do_not_load, and emits handoff 
 """
 from __future__ import annotations
 
-from .core import Store, new_id, now_iso
+from .core import Store, new_id, now_iso, AUTHORITY_RANK
 from . import ops
 
 _LOD_KEY = {"brief": "lod_brief_tokens", "standard": "lod_standard_tokens", "full": "lod_full_tokens"}
 
-# always_load is a scarce budget — fill it with the highest-signal atoms first.
-# Lower number = higher priority. (Dogfood lesson: without this the budget filled in
-# arbitrary DB order and a flood of low-value constraints starved every decision.)
-_AUTH_RANK = {"user_explicit": 0, "assistant_proposed": 1, "tool_observed": 2,
-              "artifact_declared": 3, "model_inferred": 4}
+# always_load is a scarce budget. We fill it in two passes (see compile_context_pack):
+#   1. a per-type FLOOR so every represented category (decisions AND rejected_paths AND open
+#      questions …) is guaranteed a few slots — a cold reader must see what was rejected and
+#      what is still open, not just decisions;
+#   2. the remaining budget by global signal rank.
+# This replaces a naive global type-priority sort, which merely converted the original
+# constraint-flood into an open_question/rejected_path-flood (review finding r3). Authority
+# uses the canonical core.AUTHORITY_RANK (lower = more authoritative) so the ordering matches
+# the rest of the engine instead of a divergent local copy.
 _TYPE_PRIORITY = {"principle": 0, "decision": 1, "constraint": 2, "open_question": 3,
                   "rejected_path": 4, "preference": 5, "risk": 6, "fact": 7,
                   "assumption": 8, "task": 9, "artifact": 10}
 
 
+def _num(v, default=0.0):
+    """Coerce a possibly-malformed numeric field without crashing the whole pack command."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def _rank_key(a: dict) -> tuple:
+    """Global signal rank within a type: authority, then confidence, then recency."""
     return (
-        _AUTH_RANK.get(a.get("authority_tier"), 9),
-        -round(float(a.get("confidence_score", 0) or 0), 4),
-        _TYPE_PRIORITY.get(a.get("atom_type"), 99),
-        -int(a.get("revision_no", 0) or 0),       # newer revision wins ties
+        AUTHORITY_RANK.get(a.get("authority_tier"), 9),
+        -round(_num(a.get("confidence_score")), 4),
+        -int(_num(a.get("revision_no"))),       # newer revision wins ties
     )
 
 _GENERIC_QUESTIONS = [
@@ -34,12 +46,24 @@ _GENERIC_QUESTIONS = [
 ]
 
 
+def _best_subject(always: list[dict], atom_type: str) -> str | None:
+    """Highest-signal subject_key of a given type — skip clipped/noise subjects (finding r3)."""
+    cands = [a for a in always if a.get("atom_type") == atom_type]
+    cands.sort(key=_rank_key)
+    for a in cands:
+        subj = (a.get("subject_key") or "").strip()
+        # a usable subject is a few real words, not a single fragment or generic placeholder
+        if subj and subj not in ("general", "the-key-decision") and len(subj.split("-")) >= 2:
+            return subj
+    return cands[0].get("subject_key") if cands else None
+
+
 def _continuity_test(always: list[dict]) -> list[str]:
     """Derive questions from THIS pack's atoms so the test verifies real inheritance."""
     qs = list(_GENERIC_QUESTIONS)
     have = {a.get("atom_type") for a in always}
     if "decision" in have:
-        subj = next((a.get("subject_key") for a in always if a.get("atom_type") == "decision"), "the key decision")
+        subj = _best_subject(always, "decision") or "the key decision"
         qs.append(f"What was decided about '{subj}', and why?")
     if "rejected_path" in have:
         qs.append("Name one rejected path you must not revive.")
@@ -120,22 +144,48 @@ def compile_context_pack(store: Store, project_id: str, branch_id: str,
     atoms = ops.current_atoms(store, branch_id, lifecycles=("active", "released"))
     excluded, retrieve_only = _effective_do_not_load(store, branch_id)
     atoms = [a for a in atoms if a.get("atom_id") not in excluded]
-    atoms.sort(key=_rank_key)                  # highest-signal first, so the budget can't starve decisions
+    atoms.sort(key=_rank_key)                  # highest-signal first within each type
+    floor = int(cfg.get("pack_type_floor", 2))  # min always-load slots guaranteed per present type
+
+    def _tok(a):
+        return int(a.get("token_estimate", max(1, len(a.get("statement", "")) // 4)))
 
     always, retrieve, used = [], [], 0
+    chosen: set[str] = set()
+
+    def _take(a):
+        nonlocal used
+        always.append(a)
+        used += _tok(a)
+        chosen.add(a.get("atom_id"))
+
+    # Pass 1 — per-type floor: walk types in priority order and admit each type's top `floor`
+    # atoms (by rank) if they fit, so rejected_paths / open_questions are never fully evicted.
+    by_t: dict[str, list] = {}
     for a in atoms:
-        tok = int(a.get("token_estimate", max(1, len(a.get("statement", "")) // 4)))
         if a.get("atom_id") in retrieve_only:
-            retrieve.append(a)  # forced to retrieval regardless of budget
-        elif used + tok <= budget:
-            always.append(a)
-            used += tok
+            continue
+        by_t.setdefault(a.get("atom_type"), []).append(a)
+    for t in sorted(by_t, key=lambda t: _TYPE_PRIORITY.get(t, 99)):
+        for a in by_t[t][:floor]:
+            if used + _tok(a) <= budget:
+                _take(a)
+
+    # Pass 2 — fill the remaining budget with the best of what's left, by global rank.
+    for a in atoms:
+        aid = a.get("atom_id")
+        if aid in chosen:
+            continue
+        if aid in retrieve_only:
+            retrieve.append(a)            # forced to retrieval regardless of budget
+        elif used + _tok(a) <= budget:
+            _take(a)
         else:
             retrieve.append(a)
 
     def by_type(items, t):
         return [{"atom": x["atom_id"], "statement": x["statement"],
-                 "authority": x["authority_tier"], "confidence": round(float(x.get("confidence_score", 0)), 2)}
+                 "authority": x["authority_tier"], "confidence": round(_num(x.get("confidence_score")), 2)}
                 for x in items if x.get("atom_type") == t]
 
     pack = {
