@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Basin runtime index (rebuildable; never the source of truth)
+.basin/.index/
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Internal notes (kept local, not published)
+REVIEW-*.md
+scratch/
+demo/

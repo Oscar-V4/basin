@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Basin installer. This is what `npx basin install` runs internally (oh-my-claudecode
+# front-door UX, claude-forge-style symlink + settings merge — because the plugin loader
+# does NOT load hooks/agents/settings, and Basin's engine is hook-driven).
+#
+# Usage: ./install.sh [--no-pip] [--copy] [--dry-run]
+#   CLAUDE_DIR can be overridden (defaults to ~/.claude) — useful for testing.
+set -e
+
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENGINE_DIR="$(cd "$REPO_DIR/../engine" && pwd)"
+CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+
+NO_PIP=0; COPY=0; DRY=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-pip) NO_PIP=1 ;;
+    --copy) COPY=1 ;;
+    --dry-run) DRY=1 ;;
+    -h|--help) echo "Usage: ./install.sh [--no-pip] [--copy] [--dry-run]"; exit 0 ;;
+    *) echo "Unknown option: $arg" >&2; exit 1 ;;
+  esac
+done
+
+echo "Basin installer"
+echo "  repo:    $REPO_DIR"
+echo "  engine:  $ENGINE_DIR"
+echo "  target:  $CLAUDE_DIR"
+[ "$DRY" -eq 1 ] && echo "  (dry-run)"
+
+command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
+
+link_or_copy() {  # $1=src $2=dst
+  if [ "$DRY" -eq 1 ]; then echo "  would link $(basename "$1")"; return; fi
+  rm -f "$2" 2>/dev/null || true
+  if [ "$COPY" -eq 1 ]; then cp "$1" "$2"; else ln -sf "$1" "$2"; fi
+}
+
+# 1. install the engine (editable) so `python3 -m basin` and `basin` resolve everywhere
+if [ "$NO_PIP" -eq 0 ] && [ "$DRY" -eq 0 ]; then
+  echo "Installing engine (pip install -e)..."
+  python3 -m pip install -e "$ENGINE_DIR" >/dev/null 2>&1 \
+    && echo "  engine installed" \
+    || echo "  ! pip install failed — set PYTHONPATH=$ENGINE_DIR as a fallback"
+fi
+
+# 2. hooks
+mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/commands"
+for f in "$REPO_DIR"/hooks/*.sh; do
+  [ -e "$f" ] || continue
+  link_or_copy "$f" "$CLAUDE_DIR/hooks/$(basename "$f")"
+  [ "$DRY" -eq 0 ] && chmod +x "$f" 2>/dev/null || true
+done
+echo "  hooks linked"
+
+# 3. commands
+for f in "$REPO_DIR"/commands/*.md; do
+  [ -e "$f" ] || continue
+  link_or_copy "$f" "$CLAUDE_DIR/commands/$(basename "$f")"
+done
+echo "  commands linked"
+
+# 4. merge hook registration into settings.json (deep-merge, idempotent)
+if [ "$DRY" -eq 0 ]; then
+  python3 - "$REPO_DIR/settings.partial.json" "$CLAUDE_DIR/settings.json" <<'PY'
+import json, sys, os
+partial_p, settings_p = sys.argv[1], sys.argv[2]
+partial = json.load(open(partial_p, encoding="utf-8"))
+settings = {}
+if os.path.exists(settings_p):
+    try: settings = json.load(open(settings_p, encoding="utf-8"))
+    except Exception: settings = {}
+hooks = settings.setdefault("hooks", {})
+def cmd_of(h): return h.get("hooks", [{}])[0].get("command")
+for event, entries in partial.get("hooks", {}).items():
+    cur = hooks.setdefault(event, [])
+    have = {cmd_of(e) for e in cur}
+    for e in entries:
+        if cmd_of(e) not in have:
+            cur.append(e)
+json.dump(settings, open(settings_p, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+print("  settings.json merged:", settings_p)
+PY
+fi
+
+# 5. metadata
+if [ "$DRY" -eq 0 ]; then
+  python3 - "$CLAUDE_DIR/.basin-meta.json" "$REPO_DIR" "$ENGINE_DIR" <<'PY'
+import json, sys, time
+meta_p, repo, engine = sys.argv[1], sys.argv[2], sys.argv[3]
+json.dump({"repo": repo, "engine": engine, "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "version": "0.1.0"},
+          open(meta_p, "w", encoding="utf-8"), indent=2)
+PY
+fi
+
+echo
+echo "Done. Next:"
+echo "  1. cd into a project and run:  basin setup"
+echo "  2. /basin-status  /basin-save  /basin-pack  /basin-fork  /basin-inherit"
+echo "  3. toggle the engine anytime with:  basin on  /  basin off"

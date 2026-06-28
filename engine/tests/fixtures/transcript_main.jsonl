@@ -1,0 +1,7 @@
+{"type":"user","timestamp":"2026-06-28T10:00:00Z","message":{"role":"user","content":"Let's use files as the source of truth for context."}}
+{"type":"assistant","timestamp":"2026-06-28T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Good. We should avoid a vector database for the MVP."}]}}
+{"type":"user","timestamp":"2026-06-28T10:01:00Z","message":{"role":"user","content":"The hook must always fail soft and exit zero."}}
+{"type":"user","timestamp":"2026-06-28T10:02:00Z","message":{"role":"user","content":"We decided to ship as an oh-my-claudecode-style plugin."}}
+{"type":"user","timestamp":"2026-06-28T10:03:00Z","message":{"role":"user","content":"Open question: is fork detection reliable enough on Claude Code transcripts?"}}
+{"type":"user","timestamp":"2026-06-28T10:04:00Z","message":{"role":"user","content":"I prefer the Linear look for the app."}}
+{"type":"assistant","timestamp":"2026-06-28T10:05:00Z","message":{"role":"assistant","content":[{"type":"text","text":"Noted. The engine must never write to the SQLite index directly."}]}}

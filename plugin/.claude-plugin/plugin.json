@@ -1,0 +1,10 @@
+{
+  "name": "basin",
+  "version": "0.1.0",
+  "description": "Context configuration management for AI collaboration — capture forked threads, settle agreed context into a versioned Canon, compile Context Packs for new threads.",
+  "author": "basin",
+  "license": "MIT",
+  "commands": "./commands",
+  "agents": "./agents",
+  "hooks": "./settings.partial.json"
+}

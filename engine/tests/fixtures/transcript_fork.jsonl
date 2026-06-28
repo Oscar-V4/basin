@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2026-06-28T13:00:00Z","message":{"role":"user","content":"A separate GUI app is too complex. Let's use a TUI instead."}}
+{"type":"user","timestamp":"2026-06-28T13:01:00Z","message":{"role":"user","content":"The TUI must use the curses stdlib only, no dependencies."}}
+{"type":"assistant","timestamp":"2026-06-28T13:02:00Z","message":{"role":"assistant","content":[{"type":"text","text":"Agreed. We decided to borrow the gh-orbit interaction model for the TUI."}]}}
+{"type":"user","timestamp":"2026-06-28T13:03:00Z","message":{"role":"user","content":"We should avoid building a React desktop app for now."}}
