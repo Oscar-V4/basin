@@ -35,6 +35,26 @@ data formats may still change.
 - On the dogfood transcript: staged atoms 768 → 406, pack `current_decisions` 0 → 40,
   ground-truth decision recall in the pack 0/8 → 7/8.
 
+### Fixed — r4 review (Codex audit of the r3 fixes) + cold-continuity
+- **Merge: same-revision promotion.** A fork that inherited a canon *candidate* atom at the same
+  revision and then promoted it was silently dropped (`merge_atom` returned a noop without
+  reconciling lifecycle). It now promotes the target ref.
+- **Merge: cosmetic revisions no longer break the supersedes chain.** A COSMETIC re-wording used
+  to cut the lineage pointer, making a later real edit look *diverged* and blocking a legitimate
+  fast-forward. The lineage pointer is now always set (the supersede *edge* stays STRUCTURAL-only).
+- **Merge: `--force` now also overrides resurrection conflicts**, and a genuine same-fork
+  contradiction (do X *and* X-rejected with high word overlap) is flagged via content overlap
+  rather than a branch heuristic that missed it.
+- **Pack: the per-type floor is limited to must-show types** (decisions/constraints/principles/
+  rejected_paths/open_questions/risks) so low-value artifacts can't lock budget away from
+  decisions; `_best_subject`/`_continuity_test` tolerate non-string subject keys.
+- **Extraction: stop over-rejecting and stop self-ingesting.** Bare-number prose, blockquoted
+  decisions, and dotted config identifiers are handled correctly (the cat -n guard now keys on the
+  real TAB/wide-aligned format, judged on the raw sentence before whitespace normalisation). New
+  `_is_self_output` guard stops Basin's own status rows, pack/CANON YAML, engine source, atom-id
+  refs, and the generic continuity questions from being re-ingested as atoms (a self-referential
+  loop surfaced by the cold-continuity test).
+
 ### Fixed — fork/settle merge semantics (the hero use case)
 - **No more lost updates.** `merge_atom` is no longer a blind last-writer-wins overwrite. If
   the canon advanced independently since a branch forked (divergence) or the canon owner put
@@ -55,7 +75,7 @@ data formats may still change.
 - `basin settle --branch X` — reconcile a branch and settle it into canon from the CLI.
 - `basin ignore --atom A` — attention-budget control (`exclude` / `retrieve_only` / `allow`).
 - TUI **Map** tab (context clusters).
-- Test suites grew to **138 checks** (`engine/tests/`), including `test_dogfood.py` and
+- Test suites grew to **150 checks** (`engine/tests/`), including `test_dogfood.py` and
   `test_merge.py` (fork/settle conflict semantics).
 
 ## [0.1.0] — initial alpha

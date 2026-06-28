@@ -22,6 +22,9 @@ _LOD_KEY = {"brief": "lod_brief_tokens", "standard": "lod_standard_tokens", "ful
 _TYPE_PRIORITY = {"principle": 0, "decision": 1, "constraint": 2, "open_question": 3,
                   "rejected_path": 4, "preference": 5, "risk": 6, "fact": 7,
                   "assumption": 8, "task": 9, "artifact": 10}
+# Types that must keep a guaranteed slice of always-load (the per-type floor applies to these
+# only — a cold reader must see decisions, constraints, what was rejected, and what is open).
+_MUST_SHOW = {"principle", "decision", "constraint", "open_question", "rejected_path", "risk"}
 
 
 def _num(v, default=0.0):
@@ -51,11 +54,13 @@ def _best_subject(always: list[dict], atom_type: str) -> str | None:
     cands = [a for a in always if a.get("atom_type") == atom_type]
     cands.sort(key=_rank_key)
     for a in cands:
-        subj = (a.get("subject_key") or "").strip()
+        raw = a.get("subject_key")
+        subj = raw.strip() if isinstance(raw, str) else ""
         # a usable subject is a few real words, not a single fragment or generic placeholder
         if subj and subj not in ("general", "the-key-decision") and len(subj.split("-")) >= 2:
             return subj
-    return cands[0].get("subject_key") if cands else None
+    fallback = cands[0].get("subject_key") if cands else None
+    return fallback if isinstance(fallback, str) else None
 
 
 def _continuity_test(always: list[dict]) -> list[str]:
@@ -159,14 +164,16 @@ def compile_context_pack(store: Store, project_id: str, branch_id: str,
         used += _tok(a)
         chosen.add(a.get("atom_id"))
 
-    # Pass 1 — per-type floor: walk types in priority order and admit each type's top `floor`
-    # atoms (by rank) if they fit, so rejected_paths / open_questions are never fully evicted.
+    # Pass 1 — per-type floor for MUST-SHOW types only: guarantee a cold reader sees what was
+    # rejected and what is still open even under a tight budget. The floor is deliberately NOT
+    # applied to low-value types (preference/fact/assumption/task/artifact) so a few low-signal
+    # artifacts can't lock budget away from high-signal decisions (review finding r4).
     by_t: dict[str, list] = {}
     for a in atoms:
         if a.get("atom_id") in retrieve_only:
             continue
         by_t.setdefault(a.get("atom_type"), []).append(a)
-    for t in sorted(by_t, key=lambda t: _TYPE_PRIORITY.get(t, 99)):
+    for t in sorted(_MUST_SHOW & by_t.keys(), key=lambda t: _TYPE_PRIORITY.get(t, 99)):
         for a in by_t[t][:floor]:
             if used + _tok(a) <= budget:
                 _take(a)

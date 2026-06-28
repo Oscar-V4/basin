@@ -39,33 +39,56 @@ _STOP = {"the", "a", "an", "to", "of", "for", "and", "or", "is", "are", "be", "w
 # (recall) but never stage atoms from them.
 _PROSE_EVENTS = {"user", "assistant", "system"}
 
-# A leading list / quote / tag marker is NOT evidence of a file dump — the user writes real
-# decisions as markdown bullets, numbered items, and quoted lines. Strip ONE such marker
-# before judging (else we drop the user's own high-authority decisions — review finding r3).
-_LEAD_MARKER = re.compile(r"^\s*(?:[-*+•]|\d+[.)\]:])\s+")     # bullet or "1." / "2)" list marker
+# A leading list / quote / blockquote / tag marker is NOT evidence of a file dump — the user
+# writes real decisions as markdown bullets, numbered items, blockquotes, and quoted lines.
+# Strip them (bounded) before judging (else we drop the user's own decisions — review r3/r4).
+_LEAD_MARKER = re.compile(r"^\s*(?:[-*+•]|>+|\d+[.)\]:])\s+")   # bullet / blockquote / "1." / "2)"
 _LEAD_TAG = re.compile(r"^\s*\[[a-z_]+\]\s+")                  # "[decision] ", "[constraint] "
 _QUOTES = "\"'`“”‘’«»"
 
 # Structural lines that genuinely are file / markup, not prose (checked AFTER marker-strip).
+# cat -n output is "<number>\t<content>" or wide-aligned; require a TAB or 2+ spaces so genuine
+# prose that merely starts with a number ("3 lanes are enough.") is not misread as a dump (r4).
 _STRUCT = re.compile(
-    r"^\s*[`#>|]"        # md heading / quote / fenced code / table row
-    r"|^\s*[\[{]"        # json / array fragment
-    r"|^\s*\d+\s+\S"     # cat -n line-number dump: "105 you only need…", "10 - Registers…"
+    r"^\s*[`#|]"            # md heading / fenced code / table row
+    r"|^\s*[\[{]"           # json / array fragment
+    r"|^\s*\d+(?:\t| {2,})\S"   # cat -n line-number dump (tab/wide-aligned)
 )
 # A path/filename CITATION inside prose is fine ("CLAUDE.md never names a client domain.") —
 # discount the path token, then judge what remains; only reject when the line is mostly path.
-# Extension branch is non-backtracking (no '.' in the run + lookahead anchor) to avoid ReDoS.
+# Branches are non-backtracking (segment runs hold no '.', extension anchored by lookahead) — r4.
 _PATH_TOKEN = re.compile(
     r"https?://\S+"
-    r"|(?<![\w.])~?/[\w./-]+"
-    r"|\b[\w/-]+\.(?:md|py|ts|tsx|json|sql|sh|ya?ml)(?![\w.])"
+    r"|(?<![\w.])~?(?:[\w-]+/)+[\w./-]*"                          # rooted/relative path with a slash
+    r"|(?<![\w.])(?:[\w-]+/)*[\w-]+\.(?:md|py|ts|tsx|json|sql|sh|ya?ml)(?![\w.])"   # filename.ext
+    r"|\b[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*){2,}\b"             # dotted ident a.b.c (config/JSON path)
 )
 _HANGUL = re.compile(r"[가-힣]")
+
+# Basin's OWN output and artifacts must never be re-ingested as atoms (cold-continuity finding):
+# `basin status` rows, pack/CANON YAML keys, engine source, atom/rev/checkpoint id refs, and the
+# generic continuity questions (which otherwise loop back in as bogus open_question atoms).
+_SELF_OUTPUT = re.compile(
+    r"^\s*[●○]"
+    r"|^\s*(?:statement|authority|confidence|atom|subject_key|atom_id|revision_no|atom_type|branch_id|lifecycle_status):\s"
+    r"|\bre\.compile\(|\bby_type\(|\bdef \w+\(|^\s*(?:from|import)\s+\w"
+    r"|\b(?:at|rev|ck|cp|e|s|sl|dnl)_[0-9a-f]{8,}\b"
+)
+_CONTINUITY_LEAK = re.compile(
+    r"what is a commit in this system"
+    r"|why is a summary alone insufficient"
+    r"|name one rejected path you must not"
+    r"|state one open question that is still"
+    r"|name one binding constraint that limits", re.I)
 
 
 def _strip_markers(sent: str) -> str:
     s = _LEAD_TAG.sub("", sent.strip(), count=1)
-    s = _LEAD_MARKER.sub("", s, count=1)
+    for _ in range(3):                       # bounded: e.g. blockquote + bullet ("> - item")
+        ns = _LEAD_MARKER.sub("", s, count=1)
+        if ns == s:
+            break
+        s = ns
     return s.strip().strip(_QUOTES).strip()
 
 
@@ -76,6 +99,8 @@ def _is_prose(sent: str) -> bool:
     and a sentence that merely cites a filename/path still counts (the path is discounted, not
     fatal). Only a line that is structurally a dump, or mostly path/symbols, is rejected.
     """
+    if _SELF_OUTPUT.search(sent) or _CONTINUITY_LEAK.search(sent):
+        return False                               # Basin's own output/artifacts are not atoms
     s = _strip_markers(sent)
     if not s or _STRUCT.search(s):
         return False
@@ -104,12 +129,12 @@ def extract_events(store: Store, project_id: str, branch_id: str, checkpoint_id:
             continue
         tier = _SPEAKER_TIER.get(et, "model_inferred")
         text = ev.get("content_text", "")
-        for sent in _SENT_SPLIT.split(text):
-            sent = norm_ws(sent)
+        for raw in _SENT_SPLIT.split(text):
+            sent = norm_ws(raw)
             if len(sent) < 8 or len(sent) > 400:
                 continue
-            if not _is_prose(sent):           # drop file-dump / code / markup fragments
-                continue
+            if not _is_prose(raw):            # judge the RAW form: norm_ws collapses the cat -n TAB
+                continue                       # that distinguishes a dump from bare-number prose
             for atom_type, pat in _PATTERNS:
                 if pat.search(sent):
                     conf = 0.85 if tier == "user_explicit" else 0.55

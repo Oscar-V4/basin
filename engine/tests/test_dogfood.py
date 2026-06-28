@@ -49,7 +49,7 @@ def main():
          "content_text": "Let's go with SQLite as the rebuildable index."},           # prompt echo -> skip (dup)
         {"id": "e4", "event_type": "mode", "content_text": "always plan mode required"},  # UI meta -> skip
         {"id": "e5", "event_type": "user",
-         "content_text": "10 - Registers JSON Schema-based entity tables; we must validate FKs."},  # cat -n dump -> skip
+         "content_text": "10\tRegisters JSON Schema-based entity tables; we must validate FKs."},  # cat -n dump -> skip
         {"id": "e6", "event_type": "user",
          "content_text": "We must keep CLAUDE.md additive-only going forward."},  # prose + citation -> KEEP (r3)
     ]
@@ -69,9 +69,19 @@ def main():
     check("is_prose: accepts prose citing a filename (r3)",
           extract_det._is_prose("CLAUDE.md never names a client domain."))
     check("is_prose: accepts a short Korean decision (r3)", extract_det._is_prose("별도 GUI 앱은 폐기하자."))
-    check("is_prose: rejects line-number dump", not extract_det._is_prose("105 you only need a small subset"))
+    check("is_prose: accepts a blockquoted decision (r4)", extract_det._is_prose("> - We decided to adopt the plugin model."))
+    check("is_prose: accepts bare-number prose, not a dump (r4)", extract_det._is_prose("3 lanes are enough for v1."))
+    check("is_prose: rejects cat -n TAB dump (r4)", not extract_det._is_prose("105\tyou only need a small subset"))
     check("is_prose: rejects markdown table row", not extract_det._is_prose("| col | value | note |"))
     check("is_prose: rejects a bare path line", not extract_det._is_prose("src/deeplake-api.ts"))
+    check("is_prose: rejects a dotted config identifier (r4)", not extract_det._is_prose("config.flow.parse"))
+    # self-output (cold-continuity finding): Basin's own artifacts must not become atoms
+    check("is_prose: rejects basin status row", not extract_det._is_prose("● [decision] Use files as truth."))
+    check("is_prose: rejects pack YAML key line", not extract_det._is_prose('statement: "We decided to use files."'))
+    check("is_prose: rejects a leaked continuity question",
+          not extract_det._is_prose("What is a commit in this system, and why is it not the same as a chat turn?"))
+    check("is_prose: rejects an atom-id reference line",
+          not extract_det._is_prose("See at_8570174153fb59fd for the rejected approach."))
 
     # ---- ranking: a flood of constraints must not starve decisions in the pack ----
     store2, pid2, _ = fresh()

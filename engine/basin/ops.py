@@ -7,6 +7,8 @@ moving pointer carrying *effective* visibility/lifecycle for a branch.
 """
 from __future__ import annotations
 
+import re
+
 from .core import Store, new_id, now_iso, sha256_hex, norm_ws, AUTHORITY_RANK
 from . import fingerprint as fp
 
@@ -107,7 +109,11 @@ def stage_atom(store: Store, project_id: str, branch_id: str, checkpoint_id: str
         revision_hash = sha256_hex(f"{atom_id}|{statement}|{atom_type}|{authority_tier}|{confidence_score}")
         # branch in the id so each branch owns its row (correct branch_id attribution)
         revision_id = new_id("rev", revision_hash, revision_no, branch_id)
-        supersedes_revision_id = prev.get("id") if (prev and change == "STRUCTURAL") else None
+        # Lineage pointer: ALWAYS link to the branch-local predecessor (incl. COSMETIC), so the
+        # supersedes chain stays continuous for divergence detection (a cosmetic re-wording must
+        # not cut the chain and make a later edit look diverged). The supersede EDGE below stays
+        # STRUCTURAL-only to preserve its "meaningfully replaces" semantics.
+        supersedes_revision_id = prev.get("id") if prev else None
         provenance = {"supersedes": [supersedes_revision_id] if supersedes_revision_id else [], "conflicts_with": []}
 
         rec = {
@@ -137,7 +143,7 @@ def stage_atom(store: Store, project_id: str, branch_id: str, checkpoint_id: str
                          "lifecycle_status": lifecycle, "updated_at": now_iso()}
         store.write_atom_refs(branch_id, refs)
 
-    if supersedes_revision_id:
+    if supersedes_revision_id and change == "STRUCTURAL":
         record_edge(store, project_id, branch_id, atom_id, atom_id, "supersedes",
                     confidence="EXTRACTED", source_raw_event_id=source_raw_event_id)
     return atom_id, revision_id
@@ -243,7 +249,15 @@ def merge_atom(store: Store, from_branch: str, to_branch: str, atom_id: str,
     if target:
         t_rev = target.get("current_revision_id")
         if t_rev == rev_id:
-            return {"ok": True, "status": "noop", "atom_id": atom_id}   # idempotent
+            # Same revision, but the target may still need its lifecycle/visibility reconciled — a
+            # forked branch can inherit a canon *candidate* ref at the same rev and then promote it.
+            # Treating that as a pure noop silently drops the promotion (the atom never reaches canon).
+            if target.get("lifecycle_status") == lifecycle and target.get("visibility") == visibility:
+                return {"ok": True, "status": "noop", "atom_id": atom_id}
+            store.update_atom_refs(to_branch, lambda refs: refs.__setitem__(atom_id, {
+                "current_revision_id": rev_id, "visibility": visibility,
+                "lifecycle_status": lifecycle, "updated_at": now_iso()}))
+            return {"ok": True, "status": "merged", "atom_id": atom_id, "superseded_rev": None}
         diverged = not _is_ancestor_rev(store, atom_id, t_rev, rev_id)
         rejected = target.get("lifecycle_status") in _TERMINAL_LIFECYCLES
         if (diverged or rejected) and not force:
@@ -351,12 +365,26 @@ def set_do_not_load(store: Store, project_id: str, branch_id: str, atom_id: str,
     return rec["id"]
 
 
+_C_STOP = {"the", "a", "an", "use", "using", "for", "and", "or", "to", "of", "is", "are", "be",
+           "we", "will", "with", "as", "instead", "that", "this", "it", "do", "does", "should"}
+_REJECT_W = {"rejected", "reject", "rejects", "avoid", "avoided", "drop", "dropped", "discard",
+             "deprecate", "deprecated", "never", "말자", "폐기", "버리", "대신", "하지", "금지", "않"}
+
+
+def _content_words(statement: str, subject_key: str = "") -> set[str]:
+    """Significant words of a statement, minus stopwords, rejection words, and the shared subject
+    tokens (so the overlap measures whether the rejected thing IS the affirmed thing)."""
+    subj = set(re.findall(r"[a-z0-9]+|[가-힣]+", (subject_key or "").lower()))
+    ws = re.findall(r"[a-z]{3,}|[가-힣]{2,}", statement.lower())
+    return {w for w in ws if w not in _C_STOP and w not in _REJECT_W and w not in subj}
+
+
 def _cross_type_contradictions(store: Store, canon_branch: str, project_id: str | None) -> list[dict]:
-    """An incoming rejected_path that contradicts a *surviving canon* decision/principle/constraint
-    on the same subject (do X *and* X-rejected, both active) is a self-contradictory canon — flag
-    it (non-blocking) so the pack compiler / a human can reconcile. A rejected_path and a decision
-    that arrived together from the SAME fork (the fork rejected X and chose Y) are complementary,
-    not contradictory, and are skipped — distinguished by their revision's branch_id."""
+    """An active rejected_path that rejects the SAME thing a surviving decision/principle/constraint
+    affirms (do X *and* X-rejected) is a self-contradictory canon — flag it (non-blocking) so the
+    pack compiler / a human can reconcile. "Rejected X, chose Y" (e.g. GUI rejected + use TUI) is
+    complementary, not a contradiction. The two are distinguished by content-word overlap rather
+    than by branch (a single fork can legitimately produce a real same-subject contradiction)."""
     by_subj: dict[str, list[dict]] = {}
     for a in current_atoms(store, canon_branch):
         by_subj.setdefault(a.get("subject_key"), []).append(a)
@@ -365,9 +393,10 @@ def _cross_type_contradictions(store: Store, canon_branch: str, project_id: str 
         rps = [a for a in group if a["atom_type"] == "rejected_path"]
         affirms = [a for a in group if a["atom_type"] in ("decision", "principle", "constraint")]
         for rp in rps:
+            rp_w = _content_words(rp.get("statement", ""), subj)
             for a in affirms:
-                if rp.get("branch_id") == a.get("branch_id"):
-                    continue   # same fork -> "rejected X, chose Y" is complementary, not a contradiction
+                if len(rp_w & _content_words(a.get("statement", ""), subj)) < 2:
+                    continue   # low overlap -> rejects a DIFFERENT thing than is affirmed (complementary)
                 if project_id:
                     record_edge(store, project_id, canon_branch, rp["atom_id"], a["atom_id"],
                                 "contradicts", confidence="ASSERTED", created_by="merge")
@@ -387,6 +416,11 @@ def settle_branch(store: Store, branch_id: str, canon_branch: str,
     d = diff_branch_vs_canon(store, branch_id, canon_branch)
     merged, conflicts = 0, []
     candidates = [a for a in d["new"]] + [c["branch"] for c in d["changed"]]
+    seen = {a["atom_id"] for a in candidates}
+    if force:                                  # --force also overrides resurrection conflicts
+        for c in d.get("conflicts", []):
+            if c["branch"]["atom_id"] not in seen:
+                candidates.append(c["branch"]); seen.add(c["branch"]["atom_id"])
     for a in candidates:
         res = merge_atom(store, branch_id, canon_branch, a["atom_id"],
                          project_id=project_id, force=force)
@@ -394,9 +428,10 @@ def settle_branch(store: Store, branch_id: str, canon_branch: str,
             merged += 1
         elif res.get("status") == "conflict":
             conflicts.append(res)
-    for c in d.get("conflicts", []):           # resurrection attempts flagged by the preview
-        conflicts.append({"status": "conflict", "reason": c.get("reason"),
-                          "atom_id": c["branch"]["atom_id"]})
+    if not force:
+        for c in d.get("conflicts", []):       # resurrection attempts flagged by the preview
+            conflicts.append({"status": "conflict", "reason": c.get("reason"),
+                              "atom_id": c["branch"]["atom_id"]})
     contradictions = _cross_type_contradictions(store, canon_branch, project_id)  # merged but flagged
     return {"merged": merged, "new": len(d["new"]), "changed": len(d["changed"]),
             "conflicts": conflicts, "contradictions": contradictions}

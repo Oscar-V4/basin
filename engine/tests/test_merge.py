@@ -145,6 +145,51 @@ def main():
     forced = ops.settle_branch(store, fz, "main", project_id=pid, force=True)
     check("force: --force overrides the conflict", "Forked Z." in stmts_on(store, "main"), str(stmts_on(store, "main")))
 
+    # ---- r4-1: a same-revision candidate inherited by a fork is PROMOTED on settle (no silent drop) ----
+    store, pid = fresh()
+    ops.stage_atom(store, pid, "main", None, "decision", "Use staged thing.", "topic", "user_explicit")  # candidate, not promoted
+    b = fork.create_branch(store, pid, "feat", base_checkpoint_id=store.get_branch_head("main"), from_branch="main")
+    ops.promote_branch(store, b)                  # promote on the fork -> active there, same revision id
+    res = ops.settle_branch(store, b, "main", project_id=pid)
+    check("r4-1: same-rev candidate is promoted into canon, not a silent noop",
+          "Use staged thing." in stmts_on(store, "main"), str(res))
+
+    # ---- r4-2: a COSMETIC intermediate revision must not break the supersedes chain (false divergence) ----
+    store, pid = fresh()
+    ops.stage_atom(store, pid, "main", None, "decision", "Use SQLite as truth.", "storage", "user_explicit")
+    ops.promote_branch(store, "main")
+    b = fork.create_branch(store, pid, "feat", base_checkpoint_id=store.get_branch_head("main"), from_branch="main")
+    ops.stage_atom(store, pid, b, None, "decision", "use sqlite as truth", "storage", "user_explicit")        # COSMETIC
+    ops.stage_atom(store, pid, b, None, "decision", "Use Postgres as truth.", "storage", "user_explicit")     # STRUCTURAL
+    ops.promote_branch(store, b)
+    res = ops.settle_branch(store, b, "main", project_id=pid)
+    check("r4-2: cosmetic intermediate does not cause a false divergence conflict",
+          not res["conflicts"] and "Use Postgres as truth." in stmts_on(store, "main"), str(res))
+
+    # ---- r4-3: --force overrides a resurrection conflict ----
+    store, pid = fresh()
+    aid = ops.stage_atom(store, pid, "main", None, "decision", "Risky choice.", "r", "user_explicit")[0]
+    ops.promote_branch(store, "main")
+    sp = fork.create_branch(store, pid, "sp", base_checkpoint_id=store.get_branch_head("main"), from_branch="main")
+    ops.set_atom_lifecycle(store, "main", aid, "tracked", "rejected")
+    ops.stage_atom(store, pid, sp, None, "decision", "Risky choice, reworded.", "r", "user_explicit")
+    ops.promote_branch(store, sp)
+    blocked = ops.settle_branch(store, sp, "main", project_id=pid)                 # default: blocked
+    forced = ops.settle_branch(store, sp, "main", project_id=pid, force=True)      # force: resurrects
+    check("r4-3: resurrection blocked by default", all("Risky" not in s for s in stmts_on(store, "main")) or blocked["conflicts"])
+    check("r4-3: --force resurrects intentionally", any("Risky" in s for s in stmts_on(store, "main")), str(forced))
+
+    # ---- r4-4: a REAL same-fork contradiction (high word overlap) IS flagged (branch_id no longer suppresses) ----
+    store, pid = fresh()
+    ops.stage_atom(store, pid, "main", None, "decision", "Base.", "arch", "user_explicit")
+    ops.promote_branch(store, "main")
+    b = fork.create_branch(store, pid, "b", base_checkpoint_id=store.get_branch_head("main"), from_branch="main")
+    ops.stage_atom(store, pid, b, None, "decision", "Adopt plugin architecture fully.", "arch", "user_explicit")
+    ops.stage_atom(store, pid, b, None, "rejected_path", "Plugin architecture rejected; use monolith.", "arch", "user_explicit")
+    ops.promote_branch(store, b)
+    res = ops.settle_branch(store, b, "main", project_id=pid)
+    check("r4-4: same-fork real contradiction (do X + X-rejected) is flagged", len(res["contradictions"]) >= 1, str(res))
+
     print("\n" + ("ALL PASS" if not _fails else f"FAILED: {_fails}"))
     return 1 if _fails else 0
 
