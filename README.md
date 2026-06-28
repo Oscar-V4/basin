@@ -8,7 +8,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-black?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/dependencies-stdlib%20only-black" alt="stdlib only">
-  <img src="https://img.shields.io/badge/tests-221%20passing-brightgreen" alt="221 tests passing">
+  <img src="https://img.shields.io/badge/tests-222%20passing-brightgreen" alt="222 tests passing">
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="alpha">
   <img src="https://img.shields.io/badge/built%20for-Claude%20Code%20%2B%20Codex-black" alt="built for Claude Code and Codex">
 </p>
@@ -26,7 +26,7 @@ Turn it on once per host and Basin quietly does the context engineering for you:
 - 🌿 **Recognize forks automatically.** When a host preserves the inherited transcript prefix, Basin links side threads/forks to their parent session and records new raw events on the detected branch from the start.
 - 📁 **Files are the source of truth.** Append-only JSONL + human-readable Markdown in `.basin/`; SQLite is a rebuildable index you can delete anytime.
 
-> **Status: alpha, under active development.** The engine, the Claude Code/Codex capture integrations, automatic fork detection, and the terminal UI work today and are covered by 221 passing tests. The detached LLM refiner remains opt-in. See [Status](#status).
+> **Status: alpha, under active development.** The engine, the Claude Code/Codex capture integrations, automatic fork detection, and the terminal UI work today and are covered by 222 passing tests. The detached LLM refiner remains opt-in. See [Status](#status).
 
 ---
 
@@ -86,7 +86,7 @@ Run the installer for the host you use, or run both if you move between Claude C
 
 ```bash
 basin status                 # current Canon + staged changes + open questions
-basin save -m "lock storage decision"   # settle staged atoms into the Canon
+basin save -m "lock storage decision"   # promote staged Canon/main atoms; add --branch for a fork
 basin fork --name spike      # explore a new approach on a branch
 basin auto                   # enable always-on capture + automatic fork detection for an existing project
 basin reconcile --branch spike           # preview what settling that branch would change
@@ -96,7 +96,7 @@ basin inherit --branch main  # load the pack into a new thread + take the contin
 basin on | off               # toggle capture for this project
 ```
 
-Use `basin settle --force --branch spike` only when you intentionally want to override divergence or a rejected-path resurrection. In Claude Code, the same common actions are slash commands: `/basin-save`, `/basin-pack`, `/basin-fork`, `/basin-status`, `/basin-inherit`; branch reconcile/settle stays on the CLI. In Codex, use the `basin` CLI for the same actions; capture still runs automatically through hooks.
+Use `basin settle --force --branch spike` only when you intentionally want to override divergence or a rejected-path resurrection. In Claude Code, the same common actions are slash commands: `/basin-save`, `/basin-pack`, `/basin-fork`, `/basin-status`, `/basin-inherit`; pass `--branch` to `/basin-save` when saving an auto-detected fork, while branch reconcile/settle stays on the CLI. In Codex, use the `basin` CLI for the same actions; capture still runs automatically through hooks.
 
 ## Concepts
 
@@ -122,7 +122,7 @@ More in [docs/concepts.md](docs/concepts.md) and [docs/comparison-to-git.md](doc
 | Context graph clustering (stable community ids) | ✅ working |
 | Detached LLM refiner (`basin worker`) | 🧪 opt-in — `BASIN_LLM=codex` (gpt-5.5) or `=1` (legacy `claude -p`, now API-only) |
 | Automatic fork detection | ✅ default-on (`auto_fork`); stores parent session links, LCP metadata, and prefix-only side-chat detection when transcripts preserve the inherited prefix |
-| **Tests** | ✅ **221 passing** (`engine/tests/`) |
+| **Tests** | ✅ **222 passing** (`engine/tests/`) |
 
 This is research-grade software under active development. Interfaces will change.
 

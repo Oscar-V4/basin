@@ -229,7 +229,9 @@ class Model:
         if checkpoint.get("kind") == "merge":
             result = self._merge_result(checkpoint)
             if result:
-                return _safe_int(result.get("new")), _safe_int(result.get("changed")), 0
+                forced = result.get("forced_atom_ids")
+                forced_count = len(forced) if isinstance(forced, list) else 0
+                return _safe_int(result.get("new")), _safe_int(result.get("changed")) + forced_count, 0
         added = changed = removed = 0
         for rev in self._revs_by_checkpoint.get(checkpoint.get("id"), []):
             ck = rev.get("change_kind")

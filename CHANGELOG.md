@@ -32,7 +32,7 @@ No unreleased changes.
 - Bumped engine, CLI, installer, and plugin release metadata for `0.1.3-alpha`.
 
 ### Verification
-- Full suite: **221 passing** checks across `engine/tests/`.
+- Full suite: **222 passing** checks across `engine/tests/`.
 
 ## [0.1.2-alpha] — 2026-06-29
 

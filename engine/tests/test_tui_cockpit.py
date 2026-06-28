@@ -85,6 +85,27 @@ def build_fixture():
                           title="settle 문서", summary_text="+1 new, ~0 changed, 0 conflict(s)",
                           created_by="user", source_branch_id=docs, merge_result=merge_result)
 
+    forced = fork.create_branch(store, pid, "forced", intent="force merge display",
+                                base_checkpoint_id=store.get_branch_head(main), from_branch=main)
+    ck_forced = ops.create_checkpoint(store, pid, forced, "session_end",
+                                      parent_checkpoint_id=store.get_branch_head(forced),
+                                      raw_event_start_seq=9, raw_event_end_seq=10,
+                                      title="session: forced branch", created_by="hook")
+    ops.stage_atom(store, pid, forced, ck_forced, "decision",
+                   "Use SQLite for the cockpit cache.",
+                   "cockpit-cache", "user_explicit",
+                   source_raw_event_id="re_forced_9", confidence_score=0.87)
+    ops.promote_branch(store, forced)
+    ops.stage_atom(store, pid, main, None, "decision",
+                   "Use JSONL-only cache for the cockpit.",
+                   "cockpit-cache", "user_explicit", confidence_score=0.89)
+    ops.promote_branch(store, main)
+    force_result = ops.settle_branch(store, forced, main, project_id=pid, force=True)
+    ops.create_checkpoint(store, pid, main, "merge",
+                          parent_checkpoint_id=store.get_branch_head(main),
+                          title="settle forced", summary_text="+0 new, ~1 forced, 0 conflict(s)",
+                          created_by="user", source_branch_id=forced, merge_result=force_result)
+
     ops.stage_atom(store, pid, main, None, "decision",
                    "Basin's TUI should prioritize proposal review before graph polish.",
                    "tui-history", "user_explicit", confidence_score=0.91)
@@ -97,7 +118,7 @@ def build_fixture():
                               "bad-confidence", "tool_observed",
                               confidence_score="high")[0]
     ops.promote_branch(store, main)
-    return store, tmp, {"main": main, "cockpit": cockpit, "docs": docs,
+    return store, tmp, {"main": main, "cockpit": cockpit, "docs": docs, "forced": forced,
                         "decision": decision, "changed": changed, "bad_conf": bad_conf}
 
 
@@ -154,6 +175,9 @@ def main():
     merge_thread_row = next((row_text(r) for r in threads if "settle 문서" in row_text(r)), "")
     check("Threads: merge checkpoint diffstat uses merge metadata",
           "+1 ~0 −0" in merge_thread_row, merge_thread_row)
+    forced_thread_row = next((row_text(r) for r in threads if "settle forced" in row_text(r)), "")
+    check("Threads: forced merge diffstat counts override",
+          "+0 ~1 −0" in forced_thread_row, forced_thread_row)
 
     branch_rows = m.branches_rows()
     canon_rows = m.canon_rows()
@@ -186,7 +210,8 @@ def main():
     check("Merge source: persisted source_branch_id wins when present",
           infer_merge_source_branch(merge_checkpoint, m.branch_by_name, m.branch_by_id) == ids["docs"],
           str(merge_checkpoint))
-    merge_idx = next(i for i, c in enumerate(m._threads_row_checkpoints) if c and c.get("kind") == "merge")
+    merge_idx = next(i for i, c in enumerate(m._threads_row_checkpoints)
+                     if c and c.get("title") == "settle 문서")
     merge_detail = "\n".join(row_text(r) for r in m.detail_rows("Threads", merge_idx))
     check("Details: merge checkpoint lists merged atoms",
           "Merged atoms" in merge_detail and "Document the TUI cockpit status" in merge_detail

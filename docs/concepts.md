@@ -22,7 +22,7 @@ Atom identity is content-addressed on `(project, type, subject)`, so the same id
 
 ## Canon
 
-The settled source of truth for a project, projected to a human-readable `canon/CANON.md`. Branches explore; the Canon is what has settled. Promoting context is a deliberate act: `basin save` promotes staged atoms on the current branch, while `basin reconcile --branch X` and `basin settle --branch X` preview and apply a fork's clean changes into Canon.
+The settled source of truth for a project, projected to a human-readable `canon/CANON.md`. Branches explore; the Canon is what has settled. Promoting context is a deliberate act: `basin save` promotes staged atoms on Canon/main by default or on a named branch with `--branch`, while `basin reconcile --branch X` and `basin settle --branch X` preview and apply a fork's clean changes into Canon.
 
 ## Branch and fork
 

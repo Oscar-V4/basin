@@ -7,4 +7,6 @@ Run `basin fork --name "$ARGUMENTS"` in the current project root to create a new
 that bases off the current Canon head checkpoint.
 
 Report the new branch id and explain that exploration on this branch stays isolated until
-`/basin-save` settles it back into the Canon.
+the user reviews it with `basin reconcile --branch <branch>` and settles clean changes with
+`basin settle --branch <branch>`. Use `/basin-save --branch <branch> -m "<message>"`
+only to promote staged atoms on that branch before settling.
