@@ -170,11 +170,15 @@ def cmd_reconcile(args):
     if branch in byname:
         branch = byname[branch]["branch_id"]
     d = ops.diff_branch_vs_canon(store, branch, canon_id)
-    print(f"reconcile {branch} -> canon: +{len(d['new'])} new  ~{len(d['changed'])} changed  -{len(d['removed'])} canon-only")
+    conflicts = d.get("conflicts", [])
+    print(f"reconcile {branch} -> canon: +{len(d['new'])} new  ~{len(d['changed'])} changed  "
+          f"-{len(d['removed'])} canon-only  ⚠{len(conflicts)} conflict")
     for a in d["new"]:
         print(f"  + {a['statement'][:80]}")
     for c in d["changed"]:
         print(f"  ~ {c['branch']['statement'][:80]}")
+    for c in conflicts:
+        print(f"  ! {c.get('reason','conflict')}: {c['branch']['statement'][:72]}")
 
 
 def _resolve_branch(store, name):
@@ -193,16 +197,27 @@ def cmd_ignore(args):
 
 def cmd_settle(args):
     store = _store(args)
+    pid = store.config()["project_id"]
     canon = _resolve_branch(store, store.config().get("canon_branch", "main"))
     branch = _resolve_branch(store, args.branch)
-    res = ops.settle_branch(store, branch, canon)
-    ops.create_checkpoint(store, store.config()["project_id"], canon, kind="merge",
+    res = ops.settle_branch(store, branch, canon, project_id=pid, force=args.force)
+    ops.create_checkpoint(store, pid, canon, kind="merge",
                           parent_checkpoint_id=store.get_branch_head(canon),
                           title=f"settle {args.branch}", created_by="user")
     project.project_canon(store)
     reindex.reindex(store)
     print(f"settle: merged {res['merged']} atoms from {args.branch} into canon "
           f"(+{res['new']} new, ~{res['changed']} changed)")
+    conflicts = res.get("conflicts", [])
+    if conflicts:
+        print(f"  ⚠ {len(conflicts)} conflict(s) NOT auto-merged (use --force to override):")
+        for c in conflicts[:20]:
+            print(f"    ! {c.get('reason') or c.get('status')}: {c.get('atom_id') or ''}")
+    contradictions = res.get("contradictions", [])
+    if contradictions:
+        print(f"  ⚑ {len(contradictions)} contradiction(s) merged but flagged (do X + X-rejected):")
+        for c in contradictions[:20]:
+            print(f"    ⚑ subject '{c.get('subject')}': {c.get('rejected_path')} vs {c.get('conflicts_with')}")
 
 
 def cmd_doctor(args):
@@ -247,7 +262,7 @@ def build_parser():
     s = sub.add_parser("graph"); s.set_defaults(func=cmd_graph)
     s = sub.add_parser("worker"); s.add_argument("--session", required=True); s.add_argument("--branch"); s.set_defaults(func=cmd_worker)
     s = sub.add_parser("reconcile"); s.add_argument("--branch", required=True); s.set_defaults(func=cmd_reconcile)
-    s = sub.add_parser("settle"); s.add_argument("--branch", required=True); s.set_defaults(func=cmd_settle)
+    s = sub.add_parser("settle"); s.add_argument("--branch", required=True); s.add_argument("--force", action="store_true", help="override conflicts (divergence / rejected-resurrection)"); s.set_defaults(func=cmd_settle)
     s = sub.add_parser("ignore"); s.add_argument("--atom", required=True); s.add_argument("--branch"); s.add_argument("--action", default="exclude", choices=["exclude", "retrieve_only", "allow"]); s.add_argument("--reason"); s.set_defaults(func=cmd_ignore)
     s = sub.add_parser("doctor"); s.set_defaults(func=cmd_doctor)
     s = sub.add_parser("tui"); s.add_argument("--selftest", action="store_true"); s.set_defaults(func=cmd_tui)

@@ -35,13 +35,28 @@ data formats may still change.
 - On the dogfood transcript: staged atoms 768 → 406, pack `current_decisions` 0 → 40,
   ground-truth decision recall in the pack 0/8 → 7/8.
 
+### Fixed — fork/settle merge semantics (the hero use case)
+- **No more lost updates.** `merge_atom` is no longer a blind last-writer-wins overwrite. If
+  the canon advanced independently since a branch forked (divergence) or the canon owner put
+  an atom in a terminal lifecycle (rejected/pruned), settling surfaces a **conflict** instead
+  of silently winning — so the settled canon is deterministic regardless of settle order and
+  never reverses an explicit rejection. `basin settle --force` overrides intentionally.
+- **Provenance recorded.** A clean overturn records a `supersedes` edge; a conflict records a
+  `contradicts` edge.
+- **Cross-type contradictions flagged.** When an incoming `rejected_path` contradicts a
+  *surviving* canon decision/principle/constraint on the same subject (do X *and* X-rejected),
+  settle flags it (non-blocking) so the pack compiler / a human can reconcile. A fork that
+  rejected X *and* chose Y is recognised as complementary and not flagged.
+- `basin reconcile` / `basin settle` now report conflicts and contradictions.
+
 ### Added
 - `basin doctor` — integrity check (orphan refs, headless branches, corrupt JSONL,
   index staleness, dangling do-not-load).
 - `basin settle --branch X` — reconcile a branch and settle it into canon from the CLI.
 - `basin ignore --atom A` — attention-budget control (`exclude` / `retrieve_only` / `allow`).
 - TUI **Map** tab (context clusters).
-- Test suites grew to **116 checks** (`engine/tests/`).
+- Test suites grew to **138 checks** (`engine/tests/`), including `test_dogfood.py` and
+  `test_merge.py` (fork/settle conflict semantics).
 
 ## [0.1.0] — initial alpha
 - Engine (Python 3, stdlib-only): files-as-truth append-only JSONL in `.basin/`, a

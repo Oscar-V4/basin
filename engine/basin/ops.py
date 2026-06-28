@@ -203,24 +203,67 @@ def set_atom_lifecycle(store: Store, branch_id: str, atom_id: str,
     return found[0]
 
 
+_TERMINAL_LIFECYCLES = ("rejected", "pruned", "archived")
+
+
+def _is_ancestor_rev(store: Store, atom_id: str, ancestor_rev: str, descendant_rev: str,
+                     _max: int = 500) -> bool:
+    """True if ancestor_rev equals descendant_rev or sits in its supersedes chain."""
+    cur, seen, steps = descendant_rev, set(), 0
+    while cur and cur not in seen and steps < _max:
+        if cur == ancestor_rev:
+            return True
+        seen.add(cur)
+        steps += 1
+        rev = store.get_revision(atom_id, cur)
+        cur = rev.get("supersedes_revision_id") if rev else None
+    return False
+
+
 def merge_atom(store: Store, from_branch: str, to_branch: str, atom_id: str,
-               visibility: str = "tracked", lifecycle: str = "active") -> bool:
+               visibility: str = "tracked", lifecycle: str = "active",
+               project_id: str | None = None, force: bool = False) -> dict:
     """Settle one atom from a branch into another (the Proposals merge action).
 
-    atom_id is content-addressed on the semantic entity, so it is shared across
-    branches — merging is pointing the target branch's atom_ref at this revision.
+    atom_id is content-addressed on the semantic entity, so it is shared across branches —
+    merging points the target branch's atom_ref at the source revision. But it must NOT be a
+    blind last-writer-wins overwrite: if the target advanced independently since the fork
+    (divergence) or the canon owner put the atom in a terminal lifecycle (rejected/pruned),
+    that is a conflict requiring explicit intent (`force`), surfaced — not silently won.
+
+    Returns {ok, status: merged|noop|conflict|missing, ...}.
     """
     fr = store.read_atom_refs(from_branch)
     if atom_id not in fr:
-        return False
+        return {"ok": False, "status": "missing", "atom_id": atom_id}
     rev_id = fr[atom_id]["current_revision_id"]
+
+    target = store.read_atom_refs(to_branch).get(atom_id)
+    superseded = None
+    if target:
+        t_rev = target.get("current_revision_id")
+        if t_rev == rev_id:
+            return {"ok": True, "status": "noop", "atom_id": atom_id}   # idempotent
+        diverged = not _is_ancestor_rev(store, atom_id, t_rev, rev_id)
+        rejected = target.get("lifecycle_status") in _TERMINAL_LIFECYCLES
+        if (diverged or rejected) and not force:
+            if project_id:
+                record_edge(store, project_id, to_branch, atom_id, atom_id, "contradicts",
+                            confidence="ASSERTED", created_by="merge")
+            return {"ok": False, "status": "conflict", "atom_id": atom_id,
+                    "reason": "rejected_in_canon" if rejected else "diverged",
+                    "target_rev": t_rev, "incoming_rev": rev_id}
+        superseded = t_rev   # clean fast-forward over an older canon revision
 
     def mutate(refs):
         refs[atom_id] = {"current_revision_id": rev_id, "visibility": visibility,
                          "lifecycle_status": lifecycle, "updated_at": now_iso()}
 
     store.update_atom_refs(to_branch, mutate)
-    return True
+    if project_id and superseded and superseded != rev_id:
+        record_edge(store, project_id, to_branch, atom_id, atom_id, "supersedes",
+                    confidence="ASSERTED", created_by="merge")
+    return {"ok": True, "status": "merged", "atom_id": atom_id, "superseded_rev": superseded}
 
 
 def list_checkpoints(store: Store) -> list[dict]:
@@ -268,21 +311,31 @@ def current_branch_for_session(store: Store, external_session_id: str, default: 
 
 
 def diff_branch_vs_canon(store: Store, branch_id: str, canon_branch: str) -> dict:
-    """Pure analysis (lix merge-preview spirit): what would settling this branch change?"""
+    """Pure analysis (lix merge-preview spirit): what would settling this branch change?
+
+    `conflicts` surfaces atoms the canon owner explicitly retired (terminal lifecycle) that the
+    branch would resurrect — so settle can refuse them instead of silently reversing a rejection.
+    """
     if branch_id == canon_branch:
-        return {"new": [], "changed": [], "removed": []}
+        return {"new": [], "changed": [], "removed": [], "conflicts": []}
     branch = {a["atom_id"]: a for a in current_atoms(store, branch_id)}
     canon = {a["atom_id"]: a for a in current_atoms(store, canon_branch)}
-    new, changed, removed = [], [], []
+    canon_refs = store.read_atom_refs(canon_branch)          # ALL lifecycles, incl. rejected/pruned
+    new, changed, removed, conflicts = [], [], [], []
     for aid, a in branch.items():
         if aid not in canon:
-            new.append(a)
+            cref = canon_refs.get(aid)
+            if cref and cref.get("lifecycle_status") in _TERMINAL_LIFECYCLES:
+                conflicts.append({"branch": a, "canon_lifecycle": cref.get("lifecycle_status"),
+                                  "reason": "would_resurrect_rejected"})
+            else:
+                new.append(a)
         elif a.get("semantic_fp") != canon[aid].get("semantic_fp"):
             changed.append({"branch": a, "canon": canon[aid]})
     for aid, a in canon.items():
         if aid not in branch:
             removed.append(a)
-    return {"new": new, "changed": changed, "removed": removed}
+    return {"new": new, "changed": changed, "removed": removed, "conflicts": conflicts}
 
 
 def set_do_not_load(store: Store, project_id: str, branch_id: str, atom_id: str,
@@ -298,17 +351,55 @@ def set_do_not_load(store: Store, project_id: str, branch_id: str, atom_id: str,
     return rec["id"]
 
 
-def settle_branch(store: Store, branch_id: str, canon_branch: str) -> dict:
-    """Merge every new/changed atom of a branch into the Canon (the reconcile -> settle step)."""
+def _cross_type_contradictions(store: Store, canon_branch: str, project_id: str | None) -> list[dict]:
+    """An incoming rejected_path that contradicts a *surviving canon* decision/principle/constraint
+    on the same subject (do X *and* X-rejected, both active) is a self-contradictory canon — flag
+    it (non-blocking) so the pack compiler / a human can reconcile. A rejected_path and a decision
+    that arrived together from the SAME fork (the fork rejected X and chose Y) are complementary,
+    not contradictory, and are skipped — distinguished by their revision's branch_id."""
+    by_subj: dict[str, list[dict]] = {}
+    for a in current_atoms(store, canon_branch):
+        by_subj.setdefault(a.get("subject_key"), []).append(a)
+    out = []
+    for subj, group in by_subj.items():
+        rps = [a for a in group if a["atom_type"] == "rejected_path"]
+        affirms = [a for a in group if a["atom_type"] in ("decision", "principle", "constraint")]
+        for rp in rps:
+            for a in affirms:
+                if rp.get("branch_id") == a.get("branch_id"):
+                    continue   # same fork -> "rejected X, chose Y" is complementary, not a contradiction
+                if project_id:
+                    record_edge(store, project_id, canon_branch, rp["atom_id"], a["atom_id"],
+                                "contradicts", confidence="ASSERTED", created_by="merge")
+                out.append({"status": "contradiction", "subject": subj,
+                            "rejected_path": rp["atom_id"], "conflicts_with": a["atom_id"]})
+    return out
+
+
+def settle_branch(store: Store, branch_id: str, canon_branch: str,
+                  project_id: str | None = None, force: bool = False) -> dict:
+    """Merge every new/changed atom of a branch into the Canon (the reconcile -> settle step).
+
+    Divergences, resurrections of rejected atoms, and cross-type contradictions are surfaced in
+    `conflicts` and NOT silently won (unless force=True), so the settled canon is deterministic
+    and never reverses an explicit rejection.
+    """
     d = diff_branch_vs_canon(store, branch_id, canon_branch)
-    merged = 0
-    for a in d["new"]:
-        if merge_atom(store, branch_id, canon_branch, a["atom_id"]):
+    merged, conflicts = 0, []
+    candidates = [a for a in d["new"]] + [c["branch"] for c in d["changed"]]
+    for a in candidates:
+        res = merge_atom(store, branch_id, canon_branch, a["atom_id"],
+                         project_id=project_id, force=force)
+        if res.get("status") == "merged":
             merged += 1
-    for c in d["changed"]:
-        if merge_atom(store, branch_id, canon_branch, c["branch"]["atom_id"]):
-            merged += 1
-    return {"merged": merged, "new": len(d["new"]), "changed": len(d["changed"])}
+        elif res.get("status") == "conflict":
+            conflicts.append(res)
+    for c in d.get("conflicts", []):           # resurrection attempts flagged by the preview
+        conflicts.append({"status": "conflict", "reason": c.get("reason"),
+                          "atom_id": c["branch"]["atom_id"]})
+    contradictions = _cross_type_contradictions(store, canon_branch, project_id)  # merged but flagged
+    return {"merged": merged, "new": len(d["new"]), "changed": len(d["changed"]),
+            "conflicts": conflicts, "contradictions": contradictions}
 
 
 # ---- edges ---------------------------------------------------------------
