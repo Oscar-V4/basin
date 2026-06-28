@@ -61,9 +61,43 @@ def main():
     check("validate: edge referential integrity (1 kept)", len(clean["edges"]) == 1, f"edges={len(clean['edges'])}")
     check("validate: bad string is non-raising", forgiving_validate("{bad json") == {"atoms": [], "edges": []})
 
-    # llm_run is a safe no-op without BASIN_LLM
+    # ---- JSON extraction from a verbose agent wrapper (codex/claude prose around the JSON) ----
+    wrapped = 'Sure, here are the atoms:\n```json\n{"atoms":[{"type":"decision","statement":"Use Codex 5.5."}],"edges":[]}\n```\nDone.'
+    cw = forgiving_validate(wrapped)
+    check("validate: pulls JSON out of a verbose wrapper", len(cw["atoms"]) == 1 and cw["atoms"][0]["atom_type"] == "decision", str(cw))
+
+    # ---- backend selection from BASIN_LLM ----
+    from basin import extract_llm as _llm  # noqa: E402
+    import os as _os
+    old = _os.environ.get("BASIN_LLM")
+    try:
+        _os.environ["BASIN_LLM"] = "codex"
+        check("llm: BASIN_LLM=codex selects the codex backend", _llm.select_backend() is _llm.codex_completion)
+        _os.environ["BASIN_LLM"] = "1"
+        check("llm: BASIN_LLM=1 selects the legacy backend", _llm.select_backend() is _llm.default_completion)
+        _os.environ.pop("BASIN_LLM", None)
+        check("llm: unset BASIN_LLM disables the worker", _llm.select_backend() is None)
+    finally:
+        if old is not None:
+            _os.environ["BASIN_LLM"] = old
+        else:
+            _os.environ.pop("BASIN_LLM", None)
+
+    # llm_run is a safe no-op without a backend
     r = llm_run(store, pid, "main", "nope")
     check("llm worker: safe no-op without model", "skipped" in r)
+
+    # llm_run with an INJECTED completion fn stages refined atoms (no real model call)
+    ops_sess = "llm_sess"
+    store.append_jsonl(store.events_path(ops_sess), {"t": "raw_event", "event_type": "user",
+                                                     "content_text": "We will adopt Codex as the refiner.", "id": "ev1"})
+    fake = lambda _p: ('{"atoms":['
+                       '{"type":"decision","statement":"Adopt Codex as the LLM refiner.","subject_key":"refiner-backend","authority_tier":"user_explicit","confidence":0.9},'
+                       '{"type":"rejected_path","statement":"Claude -p backend dropped.","subject_key":"claude-p","authority_tier":"user_explicit","confidence":0.8}],'
+                       '"edges":[{"src":"claude-p","dst":"refiner-backend","relation":"superseded_by"}]}')
+    rr = llm_run(store, pid, "main", ops_sess, complete=fake)
+    check("llm worker: injected backend stages refined atoms", rr.get("staged") == 2, str(rr))
+    check("llm worker: persists model edges (subject_key -> atom_id)", rr.get("edges") == 1, str(rr))
 
     # ---- graph clustering + stable IDs (graphify port) ----
     A = ops.stage_atom(store, pid, "main", None, "fact", "auth uses oauth", "auth-oauth", "user_explicit")[0]

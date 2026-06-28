@@ -47,7 +47,11 @@ def forgiving_validate(obj) -> dict:
         try:
             obj = json.loads(obj)
         except Exception:
-            return {"atoms": [], "edges": []}
+            m = re.search(r"\{.*\}", obj, re.S)   # pull JSON out of a verbose agent wrapper (codex/claude)
+            try:
+                obj = json.loads(m.group(0)) if m else None
+            except Exception:
+                obj = None
     if not isinstance(obj, dict):
         return {"atoms": [], "edges": []}
 
@@ -93,6 +97,8 @@ TRANSCRIPT:
 
 
 def default_completion(prompt: str) -> str | None:
+    # Legacy backend. NOTE: `claude -p` is now API-only, so this needs ANTHROPIC_API_KEY and
+    # will not work on a subscription CLI — prefer the codex backend (BASIN_LLM=codex).
     if os.environ.get("BASIN_LLM") != "1" or not shutil.which("claude"):
         return None
     try:
@@ -102,21 +108,66 @@ def default_completion(prompt: str) -> str | None:
         return None
 
 
+def codex_completion(prompt: str) -> str | None:
+    """Refine via Codex (gpt-5.5 / xhigh). `--output-last-message` captures just the final
+    answer (not the event stream); read-only sandbox since extraction runs no commands."""
+    if os.environ.get("BASIN_LLM") != "codex" or not shutil.which("codex"):
+        return None
+    import tempfile
+    out = tempfile.NamedTemporaryFile("r", suffix=".json", delete=False)
+    out.close()
+    try:
+        r = subprocess.run(
+            ["codex", "exec", "-m", "gpt-5.5", "-c", "model_reasoning_effort=xhigh",
+             "--skip-git-repo-check", "-s", "read-only", "--color", "never",
+             "--output-last-message", out.name, prompt],
+            capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            return None
+        with open(out.name, encoding="utf-8") as f:
+            return f.read() or None
+    except Exception:
+        return None
+    finally:
+        try:
+            os.unlink(out.name)
+        except OSError:
+            pass
+
+
+_BACKENDS = {"1": default_completion, "claude": default_completion, "codex": codex_completion}
+
+
+def select_backend():
+    """Pick the completion backend from BASIN_LLM (codex | 1/claude); None disables the worker."""
+    return _BACKENDS.get(os.environ.get("BASIN_LLM", ""))
+
+
 def run(store: Store, project_id: str, branch_id: str, session_id: str, complete=None) -> dict:
-    complete = complete or default_completion
+    complete = complete or select_backend()
+    if complete is None:
+        return {"skipped": "no LLM backend (set BASIN_LLM=codex, or =1 for legacy claude -p)"}
     events = [e for e in store.read_jsonl(store.events_path(session_id)) if e.get("t") == "raw_event"]
     if not events:
         return {"skipped": "no events"}
     convo = "\n".join(f"[{e['event_type']}] {e.get('content_text','')}" for e in events)[:12000]
     raw = complete(_PROMPT + convo)
     if not raw:
-        return {"skipped": "no completion (set BASIN_LLM=1 and install claude)"}
+        return {"skipped": "backend returned nothing (BASIN_LLM=codex needs `codex` on PATH)"}
     clean = forgiving_validate(raw)
-    staged = []
+    staged, subj_to_atom = [], {}
     for a in clean["atoms"]:
         res = ops.stage_atom(store, project_id, branch_id, None, a["atom_type"], a["statement"],
                              a["subject_key"], a["authority_tier"], source_quote=a["statement"],
                              confidence_score=a["confidence_score"], created_by="extractor_llm")
         if res:
             staged.append(res[0])
-    return {"staged": len(staged), "edges": len(clean["edges"])}
+            subj_to_atom[a["subject_key"]] = res[0]
+    edges = 0
+    for e in clean["edges"]:                 # persist the model's relationship edges (subject_key -> atom_id)
+        src, dst = subj_to_atom.get(e["src"]), subj_to_atom.get(e["dst"])
+        if src and dst and src != dst:
+            ops.record_edge(store, project_id, branch_id, src, dst, e["relation"],
+                            confidence="INFERRED", created_by="extractor_llm")
+            edges += 1
+    return {"staged": len(staged), "edges": edges}

@@ -70,6 +70,12 @@ data formats may still change.
 - `basin reconcile` / `basin settle` now report conflicts and contradictions.
 
 ### Added
+- **Codex backend for the LLM refiner.** `basin worker` with `BASIN_LLM=codex` refines the
+  deterministic candidates via Codex (gpt-5.5, xhigh) — capturing the final answer with
+  `--output-last-message`, tolerating a verbose wrapper around the JSON, and persisting the
+  model's relationship edges. The legacy `BASIN_LLM=1` (`claude -p`) backend remains but is now
+  API-only. On a small transcript the refiner produced clean, correctly-typed, high-confidence
+  atoms (and turned a `cat -n` noise line into a proper artifact/task instead of dropping it).
 - **TUI surfaces merge conflicts.** The Proposals tab now shows a **⚠ Conflicts** section
   (divergence / would-resurrect-rejected), `m` warns instead of silently no-merging a conflict,
   and `F` force-merges. The merge-preview (`diff_branch_vs_canon`) now distinguishes a clean
@@ -79,7 +85,7 @@ data formats may still change.
 - `basin settle --branch X` — reconcile a branch and settle it into canon from the CLI.
 - `basin ignore --atom A` — attention-budget control (`exclude` / `retrieve_only` / `allow`).
 - TUI **Map** tab (context clusters).
-- Test suites grew to **154 checks** (`engine/tests/`), including `test_dogfood.py` and
+- Test suites grew to **160 checks** (`engine/tests/`), including `test_dogfood.py` and
   `test_merge.py` (fork/settle conflict semantics).
 
 ## [0.1.0] — initial alpha
