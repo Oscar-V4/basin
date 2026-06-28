@@ -48,6 +48,7 @@ fi
 mkdir -p "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/commands"
 for f in "$REPO_DIR"/hooks/*.sh; do
   [ -e "$f" ] || continue
+  case "$(basename "$f")" in basin-codex-*) continue ;; esac
   link_or_copy "$f" "$CLAUDE_DIR/hooks/$(basename "$f")"
   [ "$DRY" -eq 0 ] && chmod +x "$f" 2>/dev/null || true
 done

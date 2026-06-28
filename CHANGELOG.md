@@ -6,6 +6,17 @@ data formats may still change.
 
 ## [Unreleased]
 
+### Added — Codex transcript capture adapter
+- Basin now ingests Codex rollout JSONL transcripts as conversational raw events while
+  preserving the existing Claude Code parser behavior. Codex `response_item` messages map
+  `user`/`assistant` directly and `developer` to `system`, while rollout metadata, reasoning,
+  and function-call rows are skipped.
+- Added `basin codex-hook`, Codex fail-soft shell wrappers, `codex-hooks.partial.json`, and
+  `install-codex.sh` for Codex's command-hook stdin contract (`SessionStart`, `PreCompact`,
+  and `Stop`). `Stop` is recorded as `turn_end` capture instead of finalizing the session.
+- Added Codex adapter regression tests covering synthetic rollout parsing, Claude Code parser
+  compatibility, provider registration, and turn-end checkpoint behavior.
+
 ### Fixed — post-release hardening (7-dimension adversarial audit)
 - **Security:** `safe_id()` sanitizes every external id (`session_id`/`branch_id`)
   at the path boundary — a hook-stdin value like `../../../X` can no longer write

@@ -35,7 +35,7 @@ AUTHORITY_TIERS = (
 )
 AUTHORITY_RANK = {t: i for i, t in enumerate(AUTHORITY_TIERS)}  # lower = more authoritative
 CHECKPOINT_KINDS = (
-    "manual", "pre_compact", "session_end", "semantic_commit", "merge",
+    "manual", "pre_compact", "turn_end", "session_end", "semantic_commit", "merge",
     "release_build", "fork_point", "placeholder",
 )
 EDGE_RELATIONS = (

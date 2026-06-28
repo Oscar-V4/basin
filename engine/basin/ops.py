@@ -65,10 +65,11 @@ def register_session(store: Store, project_id: str, external_session_id: str, br
                      parent_session_link_id: str | None = None,
                      base_checkpoint_id: str | None = None,
                      base_context_pack_id: str | None = None,
-                     status: str = "active") -> str:
+                     status: str = "active",
+                     provider: str = "claude_code") -> str:
     sl = new_id("sl", project_id, external_session_id, branch_id)
     rec = {
-        "t": "session_link", "id": sl, "project_id": project_id, "provider": "claude_code",
+        "t": "session_link", "id": sl, "project_id": project_id, "provider": provider,
         "external_session_id": external_session_id, "branch_id": branch_id,
         "base_checkpoint_id": base_checkpoint_id, "base_context_pack_id": base_context_pack_id,
         "parent_session_link_id": parent_session_link_id,

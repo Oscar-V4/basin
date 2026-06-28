@@ -8,9 +8,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-black?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/dependencies-stdlib%20only-black" alt="stdlib only">
-  <img src="https://img.shields.io/badge/tests-160%20passing-brightgreen" alt="160 tests passing">
+  <img src="https://img.shields.io/badge/tests-169%20passing-brightgreen" alt="169 tests passing">
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="alpha">
-  <img src="https://img.shields.io/badge/built%20for-Claude%20Code-black" alt="built for Claude Code">
+  <img src="https://img.shields.io/badge/built%20for-Claude%20Code%20%2B%20Codex-black" alt="built for Claude Code and Codex">
 </p>
 
 Basin tracks, branches, and settles the **context** of a long AI collaboration — the decisions, constraints, rejected paths, and open questions an assistant should hold on to across sessions, compactions, and forked threads.
@@ -24,7 +24,7 @@ Turn it on and Basin quietly does the context engineering for you: it captures e
 - 🪂 **Survive compaction.** A pre-compact hook captures context the moment before the window compresses — the point where it's usually lost.
 - 📁 **Files are the source of truth.** Append-only JSONL + human-readable Markdown in `.basin/`; SQLite is a rebuildable index you can delete anytime.
 
-> **Status: alpha, under active development.** The engine, the Claude Code plugin, and the terminal UI work today and are covered by 160 passing tests. The detached LLM refiner and automatic fork detection are opt-in. See [Status](#status).
+> **Status: alpha, under active development.** The engine, the Claude Code/Codex capture integrations, and the terminal UI work today and are covered by 169 passing tests. The detached LLM refiner and automatic fork detection are opt-in. See [Status](#status).
 
 ---
 
@@ -47,7 +47,7 @@ You're deep in a thread, you fork it to try a different approach, and now two li
 ## How it works
 
 ```
- Claude Code session ──hooks──▶  .basin/ (committed to your repo)
+ Claude Code / Codex session ──hooks──▶  .basin/ (committed to your repo)
                                   ├─ events/*.jsonl     ← truth: raw transcript events
                                   ├─ atoms/*.jsonl      ← truth: context atom revisions
                                   ├─ checkpoints.jsonl  ← commits (semantic state transitions)
@@ -64,19 +64,20 @@ A **commit is not a chat turn** — it's a semantic state transition. Most messa
 
 ## Quickstart
 
-Requires Python 3.10+ and [Claude Code](https://claude.com/claude-code). No other dependencies.
+Requires Python 3.10+ and either [Claude Code](https://claude.com/claude-code) or Codex. No other dependencies.
 
 ```bash
 git clone https://github.com/Oscar-V4/basin.git
 cd basin
-./plugin/install.sh          # links hooks + slash commands, merges settings.json
+./plugin/install.sh          # Claude Code: links hooks + slash commands, merges settings.json
+./plugin/install-codex.sh    # Codex: links hooks, merges ~/.codex/hooks.json
 
 cd /your/project
 basin setup                  # scaffold .basin/ in your project
 basin tui                    # open the cockpit
 ```
 
-Then work in Claude Code as usual — Basin captures context automatically (and especially right before a compaction). Or drive it directly:
+Then work in Claude Code or Codex as usual — Basin captures context automatically (and especially right before a compaction when the host exposes that hook). Codex `Stop` is treated as turn-end capture, not final session closure, so frequent turn-end runs are safe and idempotent when no new transcript events exist. Or drive it directly:
 
 ```bash
 basin status                 # current Canon + staged changes + open questions
@@ -109,11 +110,12 @@ More in [docs/concepts.md](docs/concepts.md) and [docs/comparison-to-git.md](doc
 | Engine — capture, extraction, fingerprint change-classification, save/promote, reindex, Context Pack | ✅ working |
 | Storage — append-only JSONL truth + Markdown/YAML projections + rebuildable SQLite index | ✅ working |
 | Claude Code plugin — hooks (session-start / pre-compact / session-end), slash commands, `install.sh` | ✅ working |
+| Codex capture — rollout transcript adapter + hooks (session-start / pre-compact / turn-end), `install-codex.sh` | ✅ working |
 | `basin tui` — Threads lane graph, Branches, Changes, Canon, Proposals | ✅ working |
 | Context graph clustering (stable community ids) | ✅ working |
 | Detached LLM refiner (`basin worker`) | 🧪 opt-in — `BASIN_LLM=codex` (gpt-5.5) or `=1` (legacy `claude -p`, now API-only) |
 | Automatic fork detection | 🧪 opt-in (`auto_fork`); explicit `basin fork` is the reliable path |
-| **Tests** | ✅ **160 passing** (`engine/tests/`) |
+| **Tests** | ✅ **169 passing** (`engine/tests/`) |
 
 This is research-grade software under active development. Interfaces will change.
 
@@ -121,7 +123,7 @@ This is research-grade software under active development. Interfaces will change
 
 ```
 engine/   Python 3 (stdlib only). The capture/extract/compile engine, the curses TUI, and the `basin` CLI.
-plugin/   Claude Code distribution: hooks, slash commands, install.sh, plugin manifest.
+plugin/   Claude Code and Codex distribution: hooks, slash commands, install scripts, plugin manifests.
 docs/     Concepts and comparison notes.
 assets/   Logo.
 ```

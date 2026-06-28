@@ -242,6 +242,10 @@ def cmd_hook(args):
     return hook.run(args.mode)
 
 
+def cmd_codex_hook(args):
+    return hook.run_codex(args.mode)
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="basin", description="Basin engine CLI")
     p.add_argument("--root", default=".", help="project root containing .basin/")
@@ -269,6 +273,7 @@ def build_parser():
     s = sub.add_parser("on"); s.set_defaults(func=cmd_toggle, on=True)
     s = sub.add_parser("off"); s.set_defaults(func=cmd_toggle, on=False)
     s = sub.add_parser("hook"); s.add_argument("--mode", default="session_end"); s.set_defaults(func=cmd_hook)
+    s = sub.add_parser("codex-hook"); s.add_argument("--mode", default="auto"); s.set_defaults(func=cmd_codex_hook)
     return p
 
 

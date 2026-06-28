@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "~/.codex/hooks/basin-codex-session-start.sh", "timeout": 10 } ] }
+    ],
+    "PreCompact": [
+      { "hooks": [ { "type": "command", "command": "~/.codex/hooks/basin-codex-precompact.sh", "timeout": 10 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "~/.codex/hooks/basin-codex-turn-end.sh", "timeout": 10 } ] }
+    ]
+  }
+}

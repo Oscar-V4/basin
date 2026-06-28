@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Basin Codex hook installer. Merges Codex command hooks into ~/.codex/hooks.json.
+#
+# Usage: ./install-codex.sh [--no-pip] [--copy] [--dry-run]
+#   CODEX_DIR can be overridden (defaults to ~/.codex) — useful for testing.
+set -e
+
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENGINE_DIR="$(cd "$REPO_DIR/../engine" && pwd)"
+CODEX_DIR="${CODEX_DIR:-$HOME/.codex}"
+
+NO_PIP=0; COPY=0; DRY=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-pip) NO_PIP=1 ;;
+    --copy) COPY=1 ;;
+    --dry-run) DRY=1 ;;
+    -h|--help) echo "Usage: ./install-codex.sh [--no-pip] [--copy] [--dry-run]"; exit 0 ;;
+    *) echo "Unknown option: $arg" >&2; exit 1 ;;
+  esac
+done
+
+echo "Basin Codex hook installer"
+echo "  repo:    $REPO_DIR"
+echo "  engine:  $ENGINE_DIR"
+echo "  target:  $CODEX_DIR"
+[ "$DRY" -eq 1 ] && echo "  (dry-run)"
+
+command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
+
+link_or_copy() {
+  if [ "$DRY" -eq 1 ]; then echo "  would link $(basename "$1")"; return; fi
+  rm -f "$2" 2>/dev/null || true
+  if [ "$COPY" -eq 1 ]; then cp "$1" "$2"; else ln -sf "$1" "$2"; fi
+}
+
+if [ "$NO_PIP" -eq 0 ] && [ "$DRY" -eq 0 ]; then
+  echo "Installing engine (pip install -e)..."
+  python3 -m pip install -e "$ENGINE_DIR" >/dev/null 2>&1 \
+    && echo "  engine installed" \
+    || echo "  ! pip install failed — set PYTHONPATH=$ENGINE_DIR as a fallback"
+fi
+
+mkdir -p "$CODEX_DIR/hooks"
+for f in "$REPO_DIR"/hooks/basin-codex-*.sh; do
+  [ -e "$f" ] || continue
+  link_or_copy "$f" "$CODEX_DIR/hooks/$(basename "$f")"
+  [ "$DRY" -eq 0 ] && chmod +x "$f" 2>/dev/null || true
+done
+echo "  Codex hooks linked"
+
+if [ "$DRY" -eq 0 ]; then
+  python3 - "$REPO_DIR/codex-hooks.partial.json" "$CODEX_DIR/hooks.json" <<'PY'
+import json, os, shutil, sys
+partial_p, hooks_p = sys.argv[1], sys.argv[2]
+partial = json.load(open(partial_p, encoding="utf-8"))
+settings = {}
+if os.path.exists(hooks_p) and os.path.getsize(hooks_p) > 0:
+    try:
+        settings = json.load(open(hooks_p, encoding="utf-8"))
+    except Exception as e:
+        print(f"  ! existing hooks.json is not valid JSON ({e}); refusing to overwrite.", file=sys.stderr)
+        print("    Fix or move it, then re-run install-codex.sh.", file=sys.stderr)
+        sys.exit(1)
+    shutil.copy2(hooks_p, hooks_p + ".basin.bak")
+hooks = settings.setdefault("hooks", {})
+def command_of(entry):
+    return entry.get("hooks", [{}])[0].get("command")
+for event, entries in partial.get("hooks", {}).items():
+    cur = hooks.setdefault(event, [])
+    have = {command_of(e) for e in cur}
+    for entry in entries:
+        if command_of(entry) not in have:
+            cur.append(entry)
+tmp = hooks_p + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(settings, f, indent=2, ensure_ascii=False)
+os.replace(tmp, hooks_p)
+print("  hooks.json merged:", hooks_p)
+PY
+fi
+
+echo
+echo "Done. Next:"
+echo "  1. cd into a project and run:  basin setup"
+echo "  2. use Codex normally; Basin captures SessionStart, PreCompact, and Stop"

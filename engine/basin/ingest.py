@@ -1,8 +1,9 @@
 """Transcript -> raw_event JSONL (append-only truth).
 
-Tolerant of Claude Code transcript shapes. Each event carries a raw_hash over
-(event_type, normalized text) — the key to deterministic fork detection: a forked
-thread shares an identical raw_hash prefix with its parent, then diverges.
+Tolerant of Claude Code and Codex transcript shapes. Each event carries a
+raw_hash over (event_type, normalized text) — the key to deterministic fork
+detection: a forked thread shares an identical raw_hash prefix with its parent,
+then diverges.
 """
 from __future__ import annotations
 
@@ -10,6 +11,10 @@ import json
 from pathlib import Path
 
 from .core import Store, new_id, now_iso, sha256_hex, norm_ws
+
+
+_CODEX_RECORD_TYPES = {"response_item", "session_meta", "event_msg", "turn_context"}
+_CODEX_ROLE_MAP = {"user": "user", "assistant": "assistant", "developer": "system"}
 
 
 def _text_of(content) -> str:
@@ -46,6 +51,37 @@ def _event_type(line: dict) -> str:
     return t or role or "unknown"
 
 
+def _is_codex_record(line: dict) -> bool:
+    return isinstance(line.get("payload"), dict) and line.get("type") in _CODEX_RECORD_TYPES
+
+
+def _codex_event(line: dict) -> dict | None:
+    payload = line.get("payload") if isinstance(line.get("payload"), dict) else {}
+    if line.get("type") != "response_item" or payload.get("type") != "message":
+        return None
+    role = _CODEX_ROLE_MAP.get(payload.get("role"), payload.get("role") or "unknown")
+    return {
+        "event_type": role,
+        "text": _text_of(payload.get("content")),
+        "occurred_at": (
+            line.get("timestamp")
+            or payload.get("timestamp")
+            or payload.get("occurred_at")
+            or payload.get("started_at")
+            or now_iso()
+        ),
+    }
+
+
+def _claude_code_event(line: dict) -> dict:
+    msg = line.get("message") if isinstance(line.get("message"), dict) else line
+    return {
+        "event_type": _event_type(line),
+        "text": _text_of(line.get("content", msg.get("content"))),
+        "occurred_at": line.get("timestamp") or line.get("occurred_at") or now_iso(),
+    }
+
+
 def raw_hash(event_type: str, text: str) -> str:
     return "sha256:" + sha256_hex(event_type + "\n" + norm_ws(text))[:32]
 
@@ -55,7 +91,21 @@ def parse_transcript(transcript_path: str | Path) -> list[dict]:
     out = []
     if not p.exists():
         return out
-    for raw in p.read_text(encoding="utf-8").splitlines():
+    raw_lines = p.read_text(encoding="utf-8").splitlines()
+    dialect = "claude_code"
+    for raw in raw_lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            line = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(line, dict) and _is_codex_record(line):
+            dialect = "codex"
+        break
+
+    for raw in raw_lines:
         raw = raw.strip()
         if not raw:
             continue
@@ -65,14 +115,12 @@ def parse_transcript(transcript_path: str | Path) -> list[dict]:
             continue
         if not isinstance(line, dict):
             continue
-        msg = line.get("message") if isinstance(line.get("message"), dict) else line
-        et = _event_type(line)
-        text = _text_of(line.get("content", msg.get("content")))
-        out.append({
-            "event_type": et,
-            "text": text,
-            "occurred_at": line.get("timestamp") or line.get("occurred_at") or now_iso(),
-        })
+        if dialect == "codex":
+            ev = _codex_event(line)
+            if ev is not None:
+                out.append(ev)
+        else:
+            out.append(_claude_code_event(line))
     return out
 
 
