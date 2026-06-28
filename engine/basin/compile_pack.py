@@ -10,13 +10,44 @@ from . import ops
 
 _LOD_KEY = {"brief": "lod_brief_tokens", "standard": "lod_standard_tokens", "full": "lod_full_tokens"}
 
-CONTINUITY_QUESTIONS = [
+# always_load is a scarce budget — fill it with the highest-signal atoms first.
+# Lower number = higher priority. (Dogfood lesson: without this the budget filled in
+# arbitrary DB order and a flood of low-value constraints starved every decision.)
+_AUTH_RANK = {"user_explicit": 0, "assistant_proposed": 1, "tool_observed": 2,
+              "artifact_declared": 3, "model_inferred": 4}
+_TYPE_PRIORITY = {"principle": 0, "decision": 1, "constraint": 2, "open_question": 3,
+                  "rejected_path": 4, "preference": 5, "risk": 6, "fact": 7,
+                  "assumption": 8, "task": 9, "artifact": 10}
+
+
+def _rank_key(a: dict) -> tuple:
+    return (
+        _AUTH_RANK.get(a.get("authority_tier"), 9),
+        -round(float(a.get("confidence_score", 0) or 0), 4),
+        _TYPE_PRIORITY.get(a.get("atom_type"), 99),
+        -int(a.get("revision_no", 0) or 0),       # newer revision wins ties
+    )
+
+_GENERIC_QUESTIONS = [
     "What is a commit in this system, and why is it not the same as a chat turn?",
     "Why is a summary alone insufficient to inherit this project's context?",
-    "What is the current decision on UX priority for v1?",
-    "Name one change that requires explicit human approval before it lands.",
-    "List one open question that is still unresolved.",
 ]
+
+
+def _continuity_test(always: list[dict]) -> list[str]:
+    """Derive questions from THIS pack's atoms so the test verifies real inheritance."""
+    qs = list(_GENERIC_QUESTIONS)
+    have = {a.get("atom_type") for a in always}
+    if "decision" in have:
+        subj = next((a.get("subject_key") for a in always if a.get("atom_type") == "decision"), "the key decision")
+        qs.append(f"What was decided about '{subj}', and why?")
+    if "rejected_path" in have:
+        qs.append("Name one rejected path you must not revive.")
+    if "open_question" in have:
+        qs.append("State one open question that is still unresolved.")
+    if "constraint" in have and len(qs) < 5:
+        qs.append("Name one binding constraint that limits how you proceed.")
+    return qs[:5]
 
 
 # ---- tiny YAML emitter (no dependency) -----------------------------------
@@ -46,13 +77,23 @@ def to_yaml(obj, indent: int = 0) -> str:
             else:
                 lines.append(f"{sp}{k}: {_scalar(v)}")
     elif isinstance(obj, list):
+        if not obj:
+            return f"{sp}[]"
         for item in obj:
-            if isinstance(item, dict):
+            if isinstance(item, dict) and item:
                 first = True
                 for k, v in item.items():
                     prefix = f"{sp}- " if first else f"{sp}  "
-                    lines.append(f"{prefix}{k}: {_scalar(v)}")
+                    if isinstance(v, (dict, list)) and v:
+                        lines.append(f"{prefix}{k}:")
+                        lines.append(to_yaml(v, indent + 2))  # nested under a list item
+                    elif isinstance(v, (dict, list)):
+                        lines.append(f"{prefix}{k}: {'[]' if isinstance(v, list) else '{}'}")
+                    else:
+                        lines.append(f"{prefix}{k}: {_scalar(v)}")
                     first = False
+            elif isinstance(item, (dict, list)):
+                lines.append(f"{sp}- {'[]' if isinstance(item, list) else '{}'}")
             else:
                 lines.append(f"{sp}- {_scalar(item)}")
     return "\n".join(lines)
@@ -79,6 +120,7 @@ def compile_context_pack(store: Store, project_id: str, branch_id: str,
     atoms = ops.current_atoms(store, branch_id, lifecycles=("active", "released"))
     excluded, retrieve_only = _effective_do_not_load(store, branch_id)
     atoms = [a for a in atoms if a.get("atom_id") not in excluded]
+    atoms.sort(key=_rank_key)                  # highest-signal first, so the budget can't starve decisions
 
     always, retrieve, used = [], [], 0
     for a in atoms:
@@ -111,6 +153,10 @@ def compile_context_pack(store: Store, project_id: str, branch_id: str,
         "rejected_paths": by_type(always, "rejected_path"),
         "preferences": by_type(always, "preference"),
         "risks": by_type(always, "risk"),
+        "facts": by_type(always, "fact"),
+        "assumptions": by_type(always, "assumption"),
+        "tasks": by_type(always, "task"),
+        "artifacts": by_type(always, "artifact"),
         "do_not_load": sorted(excluded),
         "retrieval_manifest": [{"atom": x["atom_id"], "type": x["atom_type"],
                                 "subject": x.get("subject_key", ""),
@@ -120,7 +166,7 @@ def compile_context_pack(store: Store, project_id: str, branch_id: str,
             "Do not resurrect anything under rejected_paths or do_not_load.",
             "Before starting work, answer the continuity_test below to confirm inheritance.",
         ],
-        "continuity_test": CONTINUITY_QUESTIONS,
+        "continuity_test": _continuity_test(always),
     }
     yaml = to_yaml(pack) + "\n"
     out = store.dir / "packs" / f"{branch_id}.{lod}.yaml"

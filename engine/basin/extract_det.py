@@ -33,6 +33,34 @@ _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+|[\n\r]+|·|•")
 _STOP = {"the", "a", "an", "to", "of", "for", "and", "or", "is", "are", "be", "we", "i",
          "let", "lets", "with", "this", "that", "it", "use", "go", "do", "ll"}
 
+# Only conversational prose carries genuine decisions. Pasted attachments, prompt
+# echoes (last-prompt), and UI metadata (mode/queue-operation) are not speech — they
+# flooded the dogfood pack with file-dump "constraints". Keep them in the raw log
+# (recall) but never stage atoms from them.
+_PROSE_EVENTS = {"user", "assistant", "system"}
+
+# Reject a sentence that is clearly file-dump / code / markup rather than prose. The
+# dominant dogfood noise was cat -n output folded into a user turn ("10 - Registers…",
+# "105 you only need…") plus markdown/table/JSON fragments and bare file paths.
+_FILE_DUMP = re.compile(
+    r"^\s*\d+\s*[|:)\].]?\s+\S"          # leading line-number (cat -n / numbered list of file content)
+    r"|^\s*[`#>|]"                        # md heading / quote / fenced code / table row
+    r"|^\s*[-*+]\s"                       # md bullet
+    r"|^\s*[\[{\"]"                       # json / array / quoted-key fragment
+)
+_PATHY = re.compile(r"https?://|/Users/|~/\.|\b[\w./-]+\.(?:md|py|ts|tsx|json|sql|sh|ya?ml)\b")
+
+
+def _is_prose(sent: str) -> bool:
+    """True if the sentence looks like natural language, not a file/code fragment."""
+    if _FILE_DUMP.search(sent) or _PATHY.search(sent):
+        return False
+    letters = sum(c.isalpha() for c in sent)
+    if letters < len(sent) * 0.5:          # mostly symbols/punctuation -> code, not prose
+        return False
+    words = re.findall(r"[A-Za-z가-힣]{2,}", sent)
+    return len(words) >= 4                  # need a few real words to be a statement
+
 
 def _subject_key(statement: str) -> str:
     words = re.findall(r"[\w가-힣]+", statement.lower())
@@ -46,11 +74,15 @@ def extract_events(store: Store, project_id: str, branch_id: str, checkpoint_id:
     staged = []
     for ev in events:
         et = ev.get("event_type", "")
+        if et not in _PROSE_EVENTS:          # skip attachment/last-prompt/mode/queue-operation
+            continue
         tier = _SPEAKER_TIER.get(et, "model_inferred")
         text = ev.get("content_text", "")
         for sent in _SENT_SPLIT.split(text):
             sent = norm_ws(sent)
             if len(sent) < 8 or len(sent) > 400:
+                continue
+            if not _is_prose(sent):           # drop file-dump / code / markup fragments
                 continue
             for atom_type, pat in _PATTERNS:
                 if pat.search(sent):

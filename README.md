@@ -8,7 +8,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-black?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/dependencies-stdlib%20only-black" alt="stdlib only">
-  <img src="https://img.shields.io/badge/tests-72%20passing-brightgreen" alt="72 tests passing">
+  <img src="https://img.shields.io/badge/tests-116%20passing-brightgreen" alt="116 tests passing">
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="alpha">
   <img src="https://img.shields.io/badge/built%20for-Claude%20Code-black" alt="built for Claude Code">
 </p>
@@ -24,7 +24,7 @@ Turn it on and Basin quietly does the context engineering for you: it captures e
 - 🪂 **Survive compaction.** A pre-compact hook captures context the moment before the window compresses — the point where it's usually lost.
 - 📁 **Files are the source of truth.** Append-only JSONL + human-readable Markdown in `.basin/`; SQLite is a rebuildable index you can delete anytime.
 
-> **Status: alpha, under active development.** The engine, the Claude Code plugin, and the terminal UI work today and are covered by 72 passing tests. The detached LLM refiner and automatic fork detection are opt-in. See [Status](#status).
+> **Status: alpha, under active development.** The engine, the Claude Code plugin, and the terminal UI work today and are covered by 116 passing tests. The detached LLM refiner and automatic fork detection are opt-in. See [Status](#status).
 
 ---
 
@@ -113,7 +113,7 @@ More in [docs/concepts.md](docs/concepts.md) and [docs/comparison-to-git.md](doc
 | Context graph clustering (stable community ids) | ✅ working |
 | Detached LLM refiner (`basin worker`) | 🧪 opt-in (`BASIN_LLM=1`) |
 | Automatic fork detection | 🧪 opt-in (`auto_fork`); explicit `basin fork` is the reliable path |
-| **Tests** | ✅ **72 passing** (`engine/tests/`) |
+| **Tests** | ✅ **116 passing** (`engine/tests/`) |
 
 This is research-grade software under active development. Interfaces will change.
 
