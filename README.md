@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="Basin" height="76">
 </p>
 
-<h3 align="center">Version control for AI context across Claude Code and Codex</h3>
+<h3 align="center">The new way of Version control for Context Engineering</h3>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-black" alt="MIT License"></a>
